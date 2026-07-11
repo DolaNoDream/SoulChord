@@ -22,6 +22,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   setMediaMetadata: (metadata: Record<string, unknown>) =>
     ipcRenderer.invoke('media:setMetadata', metadata),
 
+  // ===== 系统功能 =====
+  openExternal: (url: string) => ipcRenderer.invoke('shell:openExternal', url),
+
   // ===== 事件监听（主进程 → 渲染进程）=====
   onTrayAction: (callback: (action: string) => void) => {
     ipcRenderer.on('tray:action', (_event, action) => callback(action))

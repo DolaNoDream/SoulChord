@@ -13,6 +13,7 @@ export const useSettingsStore = defineStore('settings', () => {
   const autoplayOnLaunch = ref(true)
   const showDJEmotion = ref(true)
   const language = ref<'zh-CN' | 'en-US'>('zh-CN')
+  const deepseekApiKey = ref('')
 
   // ========== 计算属性 ==========
   const isDark = computed(() => {
@@ -53,6 +54,7 @@ export const useSettingsStore = defineStore('settings', () => {
     autoplayOnLaunch.value = true
     showDJEmotion.value = true
     language.value = 'zh-CN'
+    deepseekApiKey.value = ''
   }
 
   /** 从持久化存储加载 */
@@ -61,7 +63,7 @@ export const useSettingsStore = defineStore('settings', () => {
       const stored = localStorage.getItem('soulchord-settings')
       if (stored) {
         const data = JSON.parse(stored)
-        Object.assign({ theme, windowMode, alwaysOnTop, audioQuality, autoplayOnLaunch, showDJEmotion, language }, data)
+        Object.assign({ theme, windowMode, alwaysOnTop, audioQuality, autoplayOnLaunch, showDJEmotion, language, deepseekApiKey }, data)
       }
     } catch {
       // 忽略解析错误，使用默认值
@@ -77,13 +79,14 @@ export const useSettingsStore = defineStore('settings', () => {
       autoplayOnLaunch: autoplayOnLaunch.value,
       showDJEmotion: showDJEmotion.value,
       language: language.value,
+      deepseekApiKey: deepseekApiKey.value,
     }
     localStorage.setItem('soulchord-settings', JSON.stringify(data))
   }
 
   // 监听所有设置变化，自动保存
   watch(
-    [theme, alwaysOnTop, audioQuality, autoplayOnLaunch, showDJEmotion, language],
+    [theme, alwaysOnTop, audioQuality, autoplayOnLaunch, showDJEmotion, language, deepseekApiKey],
     () => persistToStorage(),
     { deep: false }
   )
@@ -100,6 +103,7 @@ export const useSettingsStore = defineStore('settings', () => {
     autoplayOnLaunch,
     showDJEmotion,
     language,
+    deepseekApiKey,
     // computed
     isDark,
     isMiniMode,

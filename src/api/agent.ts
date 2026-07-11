@@ -154,4 +154,10 @@ export async function updateProfile(data: {
   await http.put('/profile', data)
 }
 
+/** 向后端发送 DeepSeek API Key（后端存入 SQLite，后续请求不再传） */
+export async function sendApiKey(apiKey: string): Promise<void> {
+  if (!apiKey) return
+  await http.put('/config', { deepseek_api_key: apiKey })
+}
+
 export { http }

@@ -2,6 +2,7 @@
 import { ref, watch } from 'vue'
 import { useUserStore } from '@/stores/user'
 import { useSettingsStore } from '@/stores/settings'
+import { sendApiKey } from '@/api/agent'
 
 const props = defineProps<{
   visible: boolean
@@ -20,6 +21,27 @@ const nameInputRef = ref<HTMLInputElement | null>(null)
 const showImportDialog = ref(false)
 const importText = ref('')
 const isImporting = ref(false)
+const showApiKey = ref(false)
+
+/** 用系统浏览器打开 DeepSeek 获取 Key 的页面 */
+function openDeepSeekPage() {
+  const url = 'https://platform.deepseek.com/api_keys'
+  if (window.electronAPI?.openExternal) {
+    window.electronAPI.openExternal(url)
+  } else {
+    window.open(url, '_blank')
+  }
+}
+
+/** API Key 输入完毕后发送给后端存储 */
+function handleApiKeyChange(e: Event) {
+  const value = (e.target as HTMLInputElement).value
+  settingsStore.deepseekApiKey = value
+  // 延迟发送，避免每次按键都请求
+  if (value) {
+    sendApiKey(value).catch(() => {})
+  }
+}
 
 // 每次打开设置面板时，从后端拉取最新的用户画像
 watch(() => props.visible, (v) => {
@@ -229,6 +251,34 @@ async function handleImport() {
           </div>
           <el-switch v-model="settingsStore.showDJEmotion" size="small" />
         </div>
+      </div>
+
+      <!-- DeepSeek API Key -->
+      <div class="settings-drawer__section">
+        <h4 class="settings-drawer__section-title">🔑 DeepSeek API Key</h4>
+        <p class="settings-drawer__item-desc" style="margin-bottom: 8px;">
+          输入你的 DeepSeek API Key，用于后端调用 AI 服务。
+          <a href="#" class="settings-drawer__apikey-link" @click.prevent="openDeepSeekPage">获取 Key →</a>
+        </p>
+        <div class="settings-drawer__apikey-row">
+          <input
+            :value="settingsStore.deepseekApiKey"
+            :type="showApiKey ? 'text' : 'password'"
+            class="settings-drawer__apikey-input"
+            placeholder="sk-xxxxxxxxxxxxxxxx"
+            @input="settingsStore.deepseekApiKey = ($event.target as HTMLInputElement).value"
+            @blur="handleApiKeyChange"
+          />
+          <button
+            class="settings-drawer__apikey-toggle"
+            @click="showApiKey = !showApiKey"
+          >
+            {{ showApiKey ? '🙈' : '👁' }}
+          </button>
+        </div>
+        <p class="settings-drawer__item-desc" style="margin-top: 4px;">
+          API Key 自动保存，重启后仍在。仅发送给后端使用。
+        </p>
       </div>
 
       <!-- 音乐DNA -->
@@ -447,6 +497,51 @@ async function handleImport() {
     font-size: 11px;
     color: $text-muted;
     margin: 6px 0 0;
+  }
+
+  &__apikey-row {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+  }
+
+  &__apikey-input {
+    flex: 1;
+    padding: 7px 10px;
+    background: $bg-tertiary;
+    border: 1px solid $border-subtle;
+    border-radius: $radius-sm;
+    color: $text-primary;
+    font-size: $font-size-xs;
+    font-family: 'Consolas', monospace;
+    outline: none;
+
+    &::placeholder { color: $text-muted; }
+    &:focus { border-color: $accent-primary; }
+  }
+
+  &__apikey-link {
+    color: var(--accent-primary);
+    font-size: 11px;
+    text-decoration: none;
+
+    &:hover { text-decoration: underline; }
+  }
+
+  &__apikey-toggle {
+    width: 32px;
+    height: 32px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: $bg-glass;
+    border: 1px solid $border-subtle;
+    border-radius: $radius-sm;
+    cursor: pointer;
+    font-size: 14px;
+    flex-shrink: 0;
+
+    &:hover { border-color: $border-default; }
   }
 
   &__section-title {

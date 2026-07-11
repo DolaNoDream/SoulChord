@@ -2,7 +2,7 @@
  * SoulChord Electron 主进程
  * 负责窗口管理、系统托盘和 IPC 通信
  */
-import { app, BrowserWindow, Tray, Menu, ipcMain, nativeImage, screen } from 'electron'
+import { app, BrowserWindow, Tray, Menu, ipcMain, nativeImage, screen, shell } from 'electron'
 import { join } from 'path'
 
 // ========== 常量 ==========
@@ -190,6 +190,11 @@ function setupIPC() {
   ipcMain.handle('media:setMetadata', (_event, metadata: Record<string, unknown>) => {
     // 可用于 Windows 系统媒体控制
     console.log('Media metadata:', metadata)
+  })
+
+  // 用系统默认浏览器打开链接
+  ipcMain.handle('shell:openExternal', (_event, url: string) => {
+    return shell.openExternal(url)
   })
 }
 

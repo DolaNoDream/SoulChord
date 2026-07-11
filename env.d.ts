@@ -13,6 +13,7 @@ interface Window {
     closeWindow: () => Promise<void>
     toggleMiniMode: () => Promise<void>
     setAlwaysOnTop: (flag: boolean) => Promise<void>
+    openExternal: (url: string) => Promise<void>
     getSettings: () => Promise<Record<string, unknown>>
     setSettings: (settings: Record<string, unknown>) => Promise<void>
     setMediaMetadata: (metadata: {

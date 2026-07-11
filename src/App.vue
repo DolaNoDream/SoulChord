@@ -3,7 +3,7 @@ import { ref, onMounted } from 'vue'
 import { useSettingsStore } from '@/stores/settings'
 import { useUserStore } from '@/stores/user'
 import { useElectron } from '@/composables/useElectron'
-import { healthCheck } from '@/api/agent'
+import { healthCheck, sendApiKey } from '@/api/agent'
 import MiniWindow from '@/components/MiniWindow.vue'
 import SettingsDrawer from '@/components/SettingsDrawer.vue'
 
@@ -12,11 +12,15 @@ const userStore = useUserStore()
 const { minimize, maximize, close, isMaximized, isElectron: isInElectron } = useElectron()
 const showDrawer = ref(false)
 
-// 应用启动：检测后端 → 加载用户画像
+// 应用启动：检测后端 → 同步 API Key → 加载用户画像
 onMounted(async () => {
   const isBackendOnline = await healthCheck()
   if (isBackendOnline) {
     console.log('[SoulChord] 后端已连接')
+    // 如果用户之前设置过 API Key，启动时同步给后端
+    if (settingsStore.deepseekApiKey) {
+      sendApiKey(settingsStore.deepseekApiKey).catch(() => {})
+    }
   } else {
     console.log('[SoulChord] 后端未启动，使用本地数据运行')
   }
