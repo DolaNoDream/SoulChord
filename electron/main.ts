@@ -8,8 +8,8 @@ import { join } from 'path'
 // ========== 常量 ==========
 const MINI_WIDTH = 320
 const MINI_HEIGHT = 100
-const FULL_WIDTH = 380
-const FULL_HEIGHT = 600
+const FULL_WIDTH = 440
+const FULL_HEIGHT = 720
 
 // ========== 全局状态 ==========
 let mainWindow: BrowserWindow | null = null
