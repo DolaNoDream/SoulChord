@@ -6,10 +6,6 @@ defineProps<{
   message: ChatMessage
 }>()
 
-const emit = defineEmits<{
-  playSong: [song: import('@/types/music').Song]
-}>()
-
 function formatTime(timestamp: string): string {
   const date = new Date(timestamp)
   const now = new Date()
@@ -57,6 +53,20 @@ function formatTime(timestamp: string): string {
         <span v-if="message.isStreaming" class="chat-bubble__cursor">|</span>
       </div>
 
+      <!-- 操作指示器（对齐文档 3.3 节 operation 字段） -->
+      <div v-if="message.operation && message.role === 'assistant'" class="chat-bubble__operation">
+        <span v-if="message.operation === 'recommend'" class="chat-bubble__op-tag chat-bubble__op-tag--recommend">🎵 歌曲推荐</span>
+        <span v-else-if="message.operation === 'play_song'" class="chat-bubble__op-tag chat-bubble__op-tag--play">▶ 正在播放</span>
+        <span v-else-if="message.operation === 'skip_song'" class="chat-bubble__op-tag chat-bubble__op-tag--skip">⏭ 已切歌</span>
+        <span v-else-if="message.operation === 'add_playlist'" class="chat-bubble__op-tag chat-bubble__op-tag--add">📋 已加入队列</span>
+        <span v-else-if="message.operation === 'song_intro'" class="chat-bubble__op-tag chat-bubble__op-tag--intro">📖 歌曲介绍</span>
+      </div>
+
+      <!-- 歌曲链接预览 -->
+      <div v-if="message.url && message.role === 'assistant'" class="chat-bubble__url-preview">
+        <img v-if="message.url.match(/\.(jpg|jpeg|png|gif|webp)(\?|$)/i)" :src="message.url" class="chat-bubble__url-img" />
+      </div>
+
       <!-- 附件：歌曲推荐 -->
       <div
         v-if="message.attachments && message.attachments.length > 0"
@@ -67,7 +77,7 @@ function formatTime(timestamp: string): string {
             <SongCard
               :song="att.song"
               :show-reason="true"
-              @play="emit('playSong', att.song)"
+              @play="() => {}"
             />
           </div>
           <div v-else-if="att.type === 'playlist'" class="chat-bubble__playlist-attachment">
@@ -183,6 +193,19 @@ function formatTime(timestamp: string): string {
     color: $accent-warm;
     font-weight: bold;
   }
+
+  &__operation { margin-top: 6px; }
+  &__op-tag { display: inline-block; padding: 2px 10px; border-radius: $radius-full; font-size: 10px; font-weight: 600;
+    &--recommend { background: rgba($accent-primary, 0.15); color: $accent-primary; }
+    &--play { background: rgba($accent-success, 0.15); color: $accent-success; }
+    &--skip { background: rgba($text-muted, 0.15); color: $text-secondary; }
+    &--add { background: rgba($accent-cool, 0.15); color: $accent-cool; }
+    &--intro { background: rgba($accent-warm, 0.15); color: $accent-warm; }
+  }
+
+  &__url-preview { margin-top: 8px; }
+  &__url-img { max-width: 200px; max-height: 200px; border-radius: $radius-sm; object-fit: cover;
+    border: 1px solid $border-subtle; }
 
   &__attachments {
     margin-top: 8px;

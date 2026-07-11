@@ -1,10 +1,18 @@
 # SoulChord
 
-> 你的专属 24 小时 AI 电台 —— 不只是音乐，更是陪你度过每一刻。
+> 本地 AI 音乐推荐客户端 —— 基于 AI Agent 的桌面音乐应用，支持歌单管理、AI 画像分析、智能对话与本地音乐播放。
 
 ## 项目简介
 
-SoulChord 是一款基于 AI Agent 的桌面音乐电台应用，模拟一位 24 小时在线的私人电台 DJ。与传统音乐播放器不同，SoulChord 的核心价值不在于"帮你找到歌"，而在于通过 AI DJ 的说话方式传递**陪伴感**——安静时默默播放，合适时说恰到好处的话，懂得什么时候陪伴、什么时候保持沉默。
+SoulChord 是一款基于 AI Agent 的桌面音乐应用，围绕五大核心能力设计：
+
+1. **账号配置** — LLM API Key + 网易云 API Key 管理，网易云账号登录
+2. **歌单管理** — 网易云歌单链接导入、本地 CRUD、歌曲预览
+3. **AI 用户画像** — AI 自动分析听歌偏好，生成完整音乐画像（喜爱曲风/歌手/排斥曲风）
+4. **AI 对话交互** — WebSocket 实时双向通信，统一 `chat.reply` 三段式返回（text/url/operation）
+5. **本地音乐播放器** — 播放/暂停/切歌/进度/音量/播放模式/喜欢反馈
+
+**核心约束**：本项目无虚拟桌宠、DJ 角色、TTS 语音播报、Live2D 动画功能。
 
 ---
 
@@ -12,15 +20,15 @@ SoulChord 是一款基于 AI Agent 的桌面音乐电台应用，模拟一位 24
 
 | 层级 | 技术 | 说明 |
 |------|------|------|
-| **桌面框架** | Electron | PC 跨平台桌面应用，支持无边框、始终置顶、透明背景 |
+| **桌面框架** | Electron | PC 跨平台桌面应用，支持无边框、始终置顶 |
 | **UI 框架** | Vue 3 + TypeScript | 核心前端框架，组合式 API |
 | **构建工具** | Vite | 极速 HMR 开发体验 |
-| **状态管理** | Pinia | 全局状态管理（播放器、对话、用户画像） |
-| **组件库** | Element Plus | 基础 UI 组件（开关、对话框等） |
-| **通信** | WebSocket（主）+ HTTP（补充） | 实时双向通信，SSE 已被 WS 替代 |
-| **音频播放** | Web Audio API | 音乐播放控制 |
+| **状态管理** | Pinia | 全局状态管理（播放器、对话、用户画像、设置、歌单） |
+| **组件库** | Element Plus | 基础 UI 组件（开关、对话框、消息提示等） |
+| **通信** | WebSocket（主）+ HTTP（补充） | 实时双向通信 |
+| **音频播放** | HTMLAudioElement | 音乐播放控制 |
 | **打包分发** | electron-builder | 桌面应用打包 |
-| **接口规范** | [frontend-agent-api.md](../实训项目/frontend-agent-api.md) | 前后端契约 v0.3 |
+| **接口规范** | V1.1 前端设计文档 + API 契约文档 | 前后端对接依据 |
 
 ---
 
@@ -28,123 +36,137 @@ SoulChord 是一款基于 AI Agent 的桌面音乐电台应用，模拟一位 24
 
 ```
 SoulChord/
-│
 ├── 📦 配置文件
-│   ├── package.json              项目元数据：依赖列表、npm 脚本（dev/build/typecheck）
-│   ├── package-lock.json          锁定依赖版本，确保团队安装一致
-│   ├── tsconfig.json              TypeScript 主配置（Vue 源码）
-│   ├── tsconfig.node.json         TypeScript 配置（Electron/Vite 构建工具）
-│   ├── vite.config.ts             Vite 构建配置：Vue 插件、Electron 插件、路径别名、SCSS
-│   ├── electron-builder.yml       Electron 打包配置（Windows/macOS/Linux 安装包）
-│   ├── env.d.ts                   类型声明：Vue SFC 模块、ElectronAPI 接口
-│   ├── index.html                 Vite 入口 HTML，浏览器加载的第一个页面
-│   ├── .gitignore                 Git 忽略：node_modules、dist、dist-electron、.env 等
-│   ├── .vscode/settings.json      VSCode 配置：使用项目中的 TypeScript SDK
-│   └── README.md                  项目说明文档
+│   ├── package.json              # 项目元数据、依赖、npm 脚本
+│   ├── tsconfig.json             # TypeScript 主配置
+│   ├── tsconfig.node.json        # TypeScript 配置（Electron/Vite）
+│   ├── vite.config.ts            # Vite 构建配置
+│   ├── vite.web.config.ts        # 纯 Web 模式构建配置
+│   ├── electron-builder.yml      # Electron 打包配置
+│   ├── env.d.ts                  # 类型声明（Vue SFC、ElectronAPI）
+│   ├── index.html                # Vite 入口 HTML
+│   └── .gitignore
 │
 ├── ⚡ Electron 主进程
 │   └── electron/
-│       ├── main.ts                创建桌面窗口（无边框+透明+置顶）、系统托盘、迷你模式
-│       └── preload.ts             安全桥梁：暴露 electronAPI 给 Vue 页面（窗口控制、IPC）
+│       ├── main.ts               # 桌面窗口（无边框+置顶）、系统托盘
+│       └── preload.ts            # 安全桥梁：暴露 electronAPI
 │
 └── 🖥️ Vue 应用 (src/)
-    ├── main.ts                    Vue 应用启动：挂载 Pinia、Router、ElementPlus
-    ├── App.vue                    根组件：标题栏、路由出口、底部导航栏、迷你悬浮窗
+    ├── main.ts                   # Vue 启动：挂载 Pinia、Router、ElementPlus
+    ├── App.vue                   # 根组件：标题栏、路由出口、设置入口
     │
-    ├── types/                     🧩 类型定义
-    │   ├── music.ts               歌曲 Song、歌单 Playlist、播放模式、情绪 EmotionType
-    │   ├── chat.ts                AI 对话 ChatMessage、快捷场景 QuickScene、附件类型
-    │   └── user.ts                用户 UserProfile、音乐DNA、风格偏好
+    ├── types/                    # 🧩 类型定义
+    │   ├── music.ts              # Song、Playlist、Artist、Album、SongFeedback
+    │   ├── chat.ts               # ChatMessage、ChatReplyPayload（text/url/operation）
+    │   └── user.ts               # UserProfits、AgentInfo
     │
-    ├── stores/                    🗄️ 状态管理 (Pinia)
-    │   ├── player.ts              播放器：当前歌曲、队列、音量、进度、播放模式
-    │   ├── chat.ts                AI 对话：消息列表、流式输出中状态、快捷场景
-    │   ├── user.ts                用户：音乐DNA、听歌历史、引导状态
-    │   └── settings.ts            设置：主题、窗口模式、始终置顶、语言
+    ├── stores/                   # 🗄️ 状态管理 (Pinia)
+    │   ├── player.ts             # 播放器状态：当前歌曲、队列、音量、进度
+    │   ├── chat.ts               # AI 对话：消息列表、快捷场景
+    │   ├── user.ts               # 用户画像：UserProfits、AI 分析触发
+    │   ├── settings.ts           # 设置：LLM/网易云 Key、网易云登录状态
+    │   └── playlist.ts           # 歌单管理：导入、CRUD、自动触发画像分析
     │
-    ├── api/                       🌐 API 请求层
-    │   └── agent.ts               HTTP 接口 + WebSocket 连接工厂
+    ├── api/                      # 🌐 API 请求层
+    │   └── agent.ts              # HTTP 接口（20+ 端点）+ WebSocket 连接工厂 + 错误码
     │
-    ├── composables/               🔧 组合式函数
-    │   ├── useAudio.ts            音频引擎：HTMLAudioElement 封装，与 PlayerStore 同步
-    │   ├── useChat.ts             对话逻辑：本地消息管理 + WS 发送
-    │   ├── useElectron.ts         Electron API 封装：窗口控制、媒体会话
-    │   └── useWebSocket.ts        WebSocket 连接管理：7 种消息类型分发
+    ├── composables/              # 🔧 组合式函数
+    │   ├── useAudio.ts           # 音频引擎封装
+    │   ├── useChat.ts            # 对话逻辑
+    │   ├── useElectron.ts        # Electron API 封装
+    │   └── useWebSocket.ts       # WebSocket 连接管理、消息分发
     │
-    ├── components/                🎨 UI 组件
-    │   ├── MusicPlayer.vue        完整播放器：封面、进度条、播放/暂停/上下首、❤️喜欢
-    │   ├── SongCard.vue           歌曲卡片：封面、歌名、艺人
-    │   ├── Playlist.vue           播放列表：当前播放、等待队列
-    │   ├── ChatBubble.vue         对话气泡：用户/AI 消息、内嵌歌曲推荐
-    │   ├── MiniWindow.vue         迷你悬浮窗：紧凑播放条
-    │   └── SettingsDrawer.vue     设置面板：头像、昵称、API Key、偏好
+    ├── components/               # 🎨 UI 组件
+    │   ├── MusicPlayer.vue       # 完整播放器（封面/进度/控制/喜欢）
+    │   ├── SongCard.vue          # 歌曲卡片
+    │   ├── Playlist.vue          # 播放队列列表
+    │   ├── PlaylistPanel.vue     # 歌单管理面板（导入/CRUD）
+    │   ├── UserProfilePanel.vue  # 用户画像面板（AI生成字段只读）
+    │   ├── ChatBubble.vue        # 对话气泡（支持 operation 标签）
+    │   ├── MiniWindow.vue        # 迷你悬浮窗
+    │   ├── SettingsDrawer.vue    # 设置面板（Key配置/网易云登录/用户信息）
+    │   └── HistoryPanel.vue      # 播放历史记录
     │
-    ├── views/                     📄 页面视图
-    │   └── DashboardView.vue      主界面：播放器 + AI DJ 对话（WS 通信）
-    ├── router/                    🧭 路由
-    │   └── index.ts               路由表：/ → 首页、/chat → AI DJ、/profile → 我的
+    ├── views/                    # 📄 页面视图
+    │   └── DashboardView.vue     # 主界面：Tab切换（对话/歌单/画像）
     │
-    └── assets/styles/             🎨 样式
-        ├── variables.scss         设计系统：暗色主题颜色、字体、圆角、阴影
-        └── global.scss            全局样式：CSS Reset、滚动条、Element Plus 主题覆盖
+    ├── utils/                    # 🛠️ 工具
+    │   └── errorCodes.ts         # 错误码映射与判断函数
+    │
+    ├── router/                   # 🧭 路由
+    │   └── index.ts              # 路由表
+    │
+    └── assets/styles/            # 🎨 样式
+        ├── variables.scss        # 设计系统（暗色主题变量）
+        └── global.scss           # 全局样式 + Element Plus 主题覆盖
 ```
 
 ---
 
-## 前端功能清单
+## 功能清单
 
-### MVP 核心功能（第一版）
+### ✅ 已实现
 
-#### 1. 基础音乐播放器
-- [ ] 播放 / 暂停 / 上一首 / 下一首
-- [ ] 快进 / 快退
-- [ ] 音量调节
-- [ ] 播放进度条
-- [ ] 播放模式切换（顺序、随机、单曲循环）
-- [ ] 当前歌曲信息展示（封面、歌名、歌手）
+#### 系统设置
+- [x] LLM API Key 配置（输入/隐藏/保存）
+- [x] 网易云 API Key 配置
+- [x] 网易云账号登录状态展示
+- [x] 用户头像/昵称编辑
+- [x] 窗口始终置顶切换
 
-#### 2. AI DJ 对话窗口
-- [ ] 聊天界面（消息气泡列表）
-- [ ] 用户文字输入
-- [ ] AI 回复展示（推荐歌曲卡片 + 推荐理由 + DJ 口播文案）
-- [ ] 对话历史记录
-- [ ] 快捷场景入口（"有点累"、"需要专注"、"想放松"等预设）
+#### 歌单管理
+- [x] 网易云歌单链接导入
+- [x] 本地歌单列表展示（名称/歌曲数/日期）
+- [x] 歌单重命名
+- [x] 歌单删除（自动触发 AI 画像分析）
+- [x] 歌单内歌曲预览
 
-#### 3. 今日推荐 / 情境歌单
-- [ ] 根据时间 + 场景自动生成推荐歌单
-- [ ] 歌曲卡片列表（封面、歌名、推荐理由）
-- [ ] 一键播放全部
+#### AI 用户画像
+- [x] AI 自动生成音乐偏好画像展示（只读）
+- [x] 喜爱曲风 / 喜爱歌手 / 排斥曲风
+- [x] 音乐偏好描述 + AI 一句话总结
+- [x] 画像最后更新时间
+- [x] 手动触发重新分析画像
+- [x] 导入/删除歌单后自动触发分析
 
-#### 4. 用户音乐画像
-- [ ] "音乐 DNA" 可视化展示
-- [ ] 喜欢的风格 / 艺人 / 年代 / 情绪偏好
-- [ ] 从喜欢的歌曲列表导入后自动分析
+#### AI 对话交互
+- [x] WebSocket 实时双向通信
+- [x] 文本消息发送（chat.user_text）
+- [x] 语音转文字消息格式支持（chat.voice_text）
+- [x] AI 回复三段式处理（text/url/operation）
+- [x] 操作指令：recommend / play_song / skip_song / add_playlist / song_intro
+- [x] 快捷场景按钮（6 个预设场景）
+- [x] 30s 心跳保活 + 断线自动重连
+- [x] 错误消息实时推送展示
 
-#### 5. 桌面悬浮窗
-- [ ] 无边框窗口 + 透明背景
-- [ ] 始终置顶
-- [ ] 迷你模式 / 完整模式切换
-- [ ] 拖拽移动窗口
-- [ ] 系统托盘驻留
+#### 本地音乐播放器
+- [x] 播放/暂停/上一首/下一首
+- [x] 进度条拖拽跳转
+- [x] 音量调节 + 静音
+- [x] 播放模式切换（顺序/随机/单曲循环）
+- [x] 歌曲封面 + 歌名/艺人展示
+- [x] 喜欢/不喜欢反馈
+- [x] 播放列表管理（清空/队列）
+- [x] 播放状态上报（play_start/end/pause/resume）
 
-### 进阶功能（后续迭代）
+#### 其他
+- [x] Electron 桌面窗口（无边框/置顶/托盘）
+- [x] 播放历史记录查询
+- [x] 快捷场景按钮
+- [x] 迷你悬浮窗
+- [x] 媒体会话 API（OS 媒体控件集成）
+- [x] 暗色主题设计系统
 
-#### 6. Live2D AI DJ 角色
-- [ ] AI DJ 虚拟形象集成
-- [ ] 根据音乐情绪和对话内容展示不同表情动作
-- [ ] 说话时嘴部动画同步
+### ❌ 未实现（依赖后端）
 
-#### 7. 语音交互
-- [ ] 语音输入 → Whisper 识别 → 发送给 Agent
-- [ ] TTS 语音合成播放（AI DJ 口播）
-
-#### 8. 多模态感知
-- [ ] 情绪表情拍照输入
-- [ ] 当前天气 / 时间 / 位置展示
-
-#### 9. 长期记忆可视化
-- [ ] 听歌历史时间线
-- [ ] "年度音乐记忆地图" 可视化报告
+| 功能 | 原因 |
+|------|------|
+| 网易云扫码/验证码实际登录 | 依赖后端完成网易云登录凭证签发逻辑 |
+| 歌单导入后自动获取歌曲详情 | 后端 POST /api/playlist/import 拉取并存储 |
+| AI 画像实际分析执行 | 后端 POST /api/user/analyze 调用 LLM 分析 |
+| 歌曲播放 URL 资源获取 | 后端 music.play 消息下发播放链接 |
+| 麦克风语音采集 + ASR | 前端不内置 ASR 引擎，语音识别由后端处理 |
 
 ---
 
@@ -157,6 +179,7 @@ SoulChord/
 │  │          Vue3 渲染进程                 │   │
 │  │   • 播放器 UI                         │   │
 │  │   • AI 对话界面                        │   │
+│  │   • 歌单管理 / 用户画像面板             │   │
 │  │   • 设置面板                           │   │
 │  └───────┬──────────────────────────────┘   │
 │          │                                   │
@@ -164,128 +187,162 @@ SoulChord/
 │          │ ws://localhost:8000/ws/client     │
 │          │ • chat.user_text / chat.reply    │
 │          │ • music.play / pause / skip      │
-│          │ • tts.synthesize / played        │
-│          │ • status.expression              │
+│          │ • status.player_event            │
 │          │ • heartbeat ping/pong            │
 │          │                                   │
-│          │ HTTP（补充通道）                   │
+│          │ HTTP（配置/查询通道）              │
 │          │ http://localhost:8000/api/        │
 │          │ • GET  /init                     │
-│          │ • GET  /settings                 │
-│          │ • PUT  /settings                 │
+│          │ • GET/PUT /settings              │
+│          │ • POST /netease/login            │
+│          │ • GET  /netease/status           │
+│          │ • POST /playlist/import          │
+│          │ • GET  /playlist/list            │
+│          │ • GET/PUT/DELETE /playlist/{id}  │
+│          │ • POST /user/analyze             │
+│          │ • GET  /user/profile             │
+│          │ • PUT  /user/baseinfo            │
 │          │ • POST /feedback                 │
 │          │ • GET  /history/songs            │
-│          │ • POST /user/profile             │
-│          │ • GET/POST/DELETE /memory/*       │
 │          │                                   │
 │  ┌───────▼──────────────────────────────┐   │
 │  │      Python FastAPI (本地 Agent)      │   │
-│  │   • LangChain/LangGraph Agent        │   │
 │  │   • LLM 调用 (DeepSeek)              │   │
-│  │   • SQLite 记忆存储                   │   │
-│  │   • TTS 语音合成                      │   │
 │  │   • 网易云音乐 API 代理               │   │
+│  │   • SQLite 数据持久化                 │   │
 │  └──────────────────────────────────────┘   │
 └──────────────────────────────────────────────┘
 ```
 
 ---
 
-## 设计原则
+## 如何运行
 
-- **AI 不要过于主动** — 最好的电台 DJ 大部分时间保持安静，偶尔说合适的话
-- **陪伴感优先于推荐精准度** — 核心价值在于 DJ 说话方式传递的陪伴感
-- **交互比例 9:0.8:0.2** — 90% 安静播放 + 8% 简单交互 + 2% 深度对话
-- **温暖的 UI 氛围** — 暗色主题为主，适合深夜场景
+### 1. 环境要求
+- Node.js v18+
+- 后端 Python FastAPI 服务运行于 `http://localhost:8000`
 
----
-
-## 新电脑上如何运行（从零开始）
-
-### 1. 安装 Node.js
-
-项目需要 Node.js **v18 或更高版本**。
-
-下载地址：https://nodejs.org/zh-cn
-
-安装完成后，打开终端（PowerShell 或 CMD）验证：
-
+### 2. 安装依赖
 ```bash
-node --version   # 应显示 v18.x 或更高
-npm --version    # 应显示 9.x 或更高
-```
-
-### 2. 克隆项目
-
-```bash
-git clone https://github.com/DolaNoDream/SoulChord.git
-cd SoulChord
-git checkout front     # 切换到前端分支
-```
-
-> 如果已经拿到项目文件夹，跳过此步，直接在文件夹内打开终端即可。
-
-### 3. 安装依赖
-
-```bash
-# 使用国内镜像（推荐，下载更快）
 npm install --registry https://registry.npmmirror.com
 ```
 
-这会安装 `package.json` 中列出的所有依赖，包括 Vue、Element Plus、Vite 等。安装后项目根目录会出现 `node_modules/` 文件夹。
-
-### 4. 安装 Electron（可选，仅桌面模式需要）
-
-Electron 二进制文件约 100MB，从 GitHub 下载较慢。**如果只需要在浏览器中开发调试，可以跳过此步。**
-
+### 3. 启动开发
 ```bash
-# Windows CMD 设置镜像后安装
-set ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/
-npm install electron
-
-# 或使用 PowerShell
-$env:ELECTRON_MIRROR="https://npmmirror.com/mirrors/electron/"
-npm install electron
-```
-
-### 5. 启动项目
-
-```bash
-# 纯 Web 模式（推荐，浏览器打开，不弹 Electron 窗口）
+# 纯 Web 模式（推荐，浏览器打开，不需要 Electron）
 npm run dev:web
+
+# Electron 桌面模式
+npm run dev
 ```
 
-终端显示：
-```
-VITE v6.x  ready in xxx ms
-➜  Local:   http://localhost:5173/
-```
+浏览器打开 `http://localhost:5173/`，自动连接后端 WebSocket `ws://localhost:8000/ws/client`。
 
-浏览器打开 **`http://localhost:5173/`**，同时会自动连接后端 WebSocket `ws://localhost:8000/ws/client`。
-
-### 6. 常用命令
-
+### 4. 常用命令
 ```bash
 npm run dev:web      # 纯 Web 模式 ★ 后端联调用这个
-npm run dev          # Electron 桌面模式（弹出窗口）
+npm run dev          # Electron 桌面模式
 npm run build        # 构建生产版本
 npm run typecheck    # TypeScript 类型检查
 ```
 
-### 7. VSCode 插件（建议安装）
+---
 
-| 插件 | 用途 |
+## HTTP 接口速查
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `/api/init` | 启动初始化，拉取全量数据 |
+| GET | `/api/settings` | 获取 API Key 配置 |
+| PUT | `/api/settings` | 更新 API Key（`llm_apikey`, `netease_apikey`） |
+| POST | `/api/netease/login` | 网易云账号登录（`type`: qr/sms, `token`） |
+| GET | `/api/netease/status` | 查询网易云登录状态 |
+| POST | `/api/playlist/import` | 导入歌单（`playlist_url`） |
+| GET | `/api/playlist/list` | 本地歌单列表 |
+| GET | `/api/playlist/{id}` | 歌单详情 + 歌曲列表 |
+| PUT | `/api/playlist/{id}` | 修改歌单名称/备注 |
+| DELETE | `/api/playlist/{id}` | 删除歌单 |
+| POST | `/api/user/analyze` | 手动触发 AI 画像分析 |
+| GET | `/api/user/profile` | 查询用户完整画像 |
+| PUT | `/api/user/baseinfo` | 修改昵称/头像 |
+| POST | `/api/feedback` | 歌曲反馈（like/dislike/favorite/skip） |
+| GET | `/api/history/songs` | 播放历史记录 |
+
+所有 HTTP 响应统一格式：`{ code: 0, msg: "ok", data: {} }`，`code=0` 为成功。
+
+### 通用错误码
+
+| code | 含义 |
 |------|------|
-| **Vue - Official** | Vue 3 语法高亮、类型提示、模板智能补全 |
-| **TypeScript** | TS 类型检查 |
+| 0 | 成功 |
+| 1001 | 参数错误 |
+| 1002 | APIKey未配置 / 网易云账号未登录 |
+| 1003 | 歌单/歌曲资源不存在 |
+| 2001 | LLM大模型调用失败 |
+| 2002 | 工具调用失败 |
+| 2003 | 请求超时 |
+| 3001 | 网易云音乐服务不可用 |
+| 3002 | 网易云接口请求异常 |
+| 9999 | 服务内部异常 |
 
+---
 
-## 项目依赖一览
+## WebSocket 消息速查
 
-| 依赖 | 说明 | 安装方式 |
-|------|------|---------|
-| **Node.js v18+** | JS 运行时 | 官网下载安装 |
-| **Vue / Vite / Pinia / Element Plus 等** | 前端框架和组件库 | `npm install` 自动安装 |
-| **Electron** | 桌面壳（可选，约 100MB） | 见第 4 步 |
-| **Python FastAPI** | 后端 AI Agent 服务 | 后端项目独立部署，默认 `http://localhost:8000` |
+### 前端 → 服务端
 
+| type | subtype | 说明 |
+|------|---------|------|
+| `chat` | `user_text` | 用户文本输入（`payload.text`） |
+| `chat` | `voice_text` | 语音识别文本（`payload.text` + `confidence`） |
+| `status` | `player_event` | 播放状态上报（`payload.event`） |
+| `heartbeat` | `ping` | 心跳保活（30s） |
+
+### 服务端 → 前端
+
+| type | subtype | 说明 |
+|------|---------|------|
+| `chat` | `reply` | AI 回复（`text` + `url` + `operation`） |
+| `music` | `play` | 播放歌曲（`song` + `play_url`） |
+| `music` | `pause` | 暂停 |
+| `music` | `resume` | 恢复播放 |
+| `music` | `skip` | 切歌 |
+| `music` | `update_playlist` | 更新播放列表 |
+| `status` | `welcome` | 连接欢迎（`session_id`） |
+| `error` | — | 错误推送（`code` + `msg`） |
+| `heartbeat` | `pong` | 心跳响应 |
+
+### 消息格式
+
+所有 WS 消息统一 JSON 结构：
+```json
+{
+  "type": "chat",
+  "subtype": "user_text",
+  "id": "uuid",
+  "ts": 1739270400000,
+  "payload": {}
+}
+```
+
+---
+
+## 设计原则
+
+- **五大核心能力** — 账号配置、歌单管理、AI 画像、AI 对话、音乐播放
+- **HTTP + WebSocket 混合通信** — 配置/查询用 HTTP，实时交互用 WebSocket
+- **AI 画像仅自动生成** — 音乐偏好由 AI 分析产生，前端不做手动编辑入口
+- **统一 chat.reply 三段式返回** — text（文案）/ url（资源链接）/ operation（操作指令）
+- **温暖的暗色主题** — 适合长时间使用的深色 UI
+
+---
+
+## 前端依赖一览
+
+| 依赖 | 说明 |
+|------|------|
+| **Node.js v18+** | JS 运行时 |
+| **Vue 3 + Vite + Pinia** | 前端框架 |
+| **Element Plus** | UI 组件库 |
+| **Electron** | 桌面壳（可选，约 100MB） |
+| **Python FastAPI** | 后端 AI Agent 服务，默认 `http://localhost:8000` |

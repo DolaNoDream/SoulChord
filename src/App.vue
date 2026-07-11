@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, provide, readonly } from 'vue'
 import { useSettingsStore } from '@/stores/settings'
 import { useUserStore } from '@/stores/user'
+import { usePlaylistStore } from '@/stores/playlist'
 import { useElectron } from '@/composables/useElectron'
 import { fetchInit } from '@/api/agent'
 import MiniWindow from '@/components/MiniWindow.vue'
@@ -10,23 +11,42 @@ import HistoryPanel from '@/components/HistoryPanel.vue'
 
 const settingsStore = useSettingsStore()
 const userStore = useUserStore()
+const playlistStore = usePlaylistStore()
 const { minimize, maximize, close, isMaximized, isElectron: isInElectron } = useElectron()
 const showDrawer = ref(false)
 const showHistory = ref(false)
+const initDone = ref(false)
+provide('initDone', readonly(initDone))
 
-// 启动：连接后端 → 加载用户画像 + 拉取后端设置
+// 启动：连接后端 → 加载用户画像 + 拉取后端设置 + 歌单列表
 onMounted(async () => {
   try {
     const initData = await fetchInit()
-    await userStore.loadInit()
-    // 从后端 settings 恢复设置（优先级高于 localStorage）
+    // 直接设置数据（避免 userStore.loadInit 再次调 fetchInit）
+    if (initData.user_profile) userStore.profile = initData.user_profile
+    if (initData.agent) userStore.agentInfo = initData.agent
+    userStore.isProfileLoaded = true
+    // 从后端 settings 恢复设置
     if (initData.settings) {
       settingsStore.loadFromBackend(initData.settings as Record<string, unknown>)
     }
+    // 加载网易云登录状态
+    if (initData.netease_status) {
+      settingsStore.setNeteaseStatus(
+        initData.netease_status.login_status,
+        initData.netease_status.nickname,
+      )
+    }
+    // 加载本地歌单列表
+    if (initData.playlists) {
+      playlistStore.setFromInit(initData.playlists)
+    }
     console.log('[SoulChord] 后端已连接，persona:', userStore.agentInfo?.persona)
     settingsStore.syncToBackend()
+    initDone.value = true  // 通知 DashboardView 可以建立 WS 连接
   } catch {
     console.log('[SoulChord] 后端未启动，使用本地数据')
+    initDone.value = true  // 即使后端不可用也允许进入界面
   }
 })
 </script>
@@ -35,12 +55,12 @@ onMounted(async () => {
   <MiniWindow v-if="isInElectron && false" />
 
   <div v-else class="app">
-    <header v-if="isInElectron" class="app__titlebar drag-region">
+    <header class="app__titlebar" :class="{ 'drag-region': isInElectron }">
       <button class="app__history-btn no-drag" @click="showHistory = !showHistory" title="播放记录">
         {{ showHistory ? '📜' : '📋' }}
       </button>
       <div class="app__titlebar-title">SoulChord</div>
-      <div class="app__titlebar-controls no-drag">
+      <div v-if="isInElectron" class="app__titlebar-controls no-drag">
         <button class="app__titlebar-btn" title="最小化" @click="minimize">─</button>
         <button class="app__titlebar-btn" :title="isMaximized ? '还原' : '最大化'" @click="maximize">
           <span v-if="isMaximized" class="app__icon app__icon--restore"></span>

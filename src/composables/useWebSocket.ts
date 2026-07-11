@@ -1,18 +1,18 @@
 /**
- * WebSocket 连接管理（对齐 frontend-agent-api.md v0.3）
+ * WebSocket 连接管理（v1.1 — 对齐 frontend-agent-api.md）
  */
 import { ref, onUnmounted } from 'vue'
-import { createAgentSocket, buildWsMsg } from '@/api/agent'
+import { createAgentSocket, buildWsMsg, ERROR_CODES } from '@/api/agent'
 import { usePlayerStore, setWsSend } from '@/stores/player'
 import { useChatStore } from '@/stores/chat'
-import type { WsMessage, ChatReplyPayload } from '@/types/chat'
+import type { WsMessage, ChatReplyPayload, OperationType } from '@/types/chat'
 import type { Song, MusicPlayPayload } from '@/types/music'
 
 export function useWebSocket() {
   const ws = ref<WebSocket | null>(null)
   const isConnected = ref(false)
   const sessionId = ref<string | null>(null)
-  const agentInfo = ref<{ version: string; persona: string } | null>(null)
+  const agentVersion = ref('')
   const heartbeatTimer = ref<ReturnType<typeof setInterval> | null>(null)
 
   const playerStore = usePlayerStore()
@@ -26,7 +26,7 @@ export function useWebSocket() {
 
     ws.value.onopen = () => {
       isConnected.value = true
-      setWsSend(send)  // 注入 WS 发送函数到 playerStore，用于上报播放事件
+      setWsSend(send)
       console.log('[WS] 已连接')
       startHeartbeat()
     }
@@ -42,7 +42,7 @@ export function useWebSocket() {
 
     ws.value.onclose = () => {
       isConnected.value = false
-      setWsSend(null)  // 清除注入
+      setWsSend(null)
       stopHeartbeat()
       console.log('[WS] 已断开，5 秒后重连')
       setTimeout(connect, 5000)
@@ -70,36 +70,61 @@ export function useWebSocket() {
     ws.value.send(buildWsMsg(type, subtype, payload, id))
   }
 
+  /** 处理 chat.reply 中的 operation 指令 */
+  function handleOperation(operation: OperationType) {
+    switch (operation) {
+      case 'play_song':
+        // 实际播放由 music.play 消息单独触发，chat.reply 仅标记文案
+        break
+      case 'skip_song':
+        playerStore.next()
+        break
+      case 'add_playlist':
+        // 添加到队列的歌曲由 music.play / music.update_playlist 下发
+        // 如果当前正在播放的歌曲存在，将其加入队列
+        if (playerStore.currentSong) {
+          playerStore.addToQueue({ ...playerStore.currentSong })
+        }
+        break
+      case 'recommend':
+        // 推荐歌曲列表通过 music.update_playlist 或后续 music.play 下发
+        break
+      case 'song_intro':
+        // 仅展示歌曲介绍文字，无播放动作
+        break
+    }
+  }
+
   /** 处理收到的消息 */
   function handleMessage(msg: WsMessage) {
     const { type, subtype, payload } = msg
 
     switch (type) {
-      // 欢迎消息
+      // 系统状态
       case 'status':
         if (subtype === 'welcome') {
-          const p = payload as { session_id: string; agent: { version: string; persona: string } }
+          const p = payload as { session_id: string }
           sessionId.value = p.session_id
-          agentInfo.value = p.agent
-        } else if (subtype === 'expression') {
-          const p = payload as { expression: string }
-          playerStore.currentExpression = p.expression
         }
         break
 
-      // AI 回复
+      // AI 回复（对齐文档 2.3.1 chat.reply — text/url/operation 三段核心数据）
       case 'chat':
         if (subtype === 'reply') {
           const p = payload as ChatReplyPayload
+          const messageId = msg.id || crypto.randomUUID()
           chatStore.addMessage({
-            id: msg.id || crypto.randomUUID(),
+            id: messageId,
             role: 'assistant',
-            content: p.reply,
+            content: p.text,
             timestamp: new Date().toISOString(),
-            emotion: p.emotion,
+            url: p.url,
+            operation: p.operation,
             intent: p.intent,
           })
           chatStore.isStreaming = false
+          // 处理操作指令
+          handleOperation(p.operation)
         }
         break
 
@@ -108,24 +133,20 @@ export function useWebSocket() {
         handleMusicMessage(subtype || '', payload)
         break
 
-      // TTS
-      case 'tts':
-        if (subtype === 'synthesize') {
-          const p = payload as { text: string; audio_url: string; voice: string }
-          // 播放 TTS 音频
-          const audio = new Audio(p.audio_url)
-          audio.play().catch(() => {})
-          // 播放完后回执
-          audio.onended = () => {
-            send('tts', 'played', { played_ms: audio.duration ? audio.duration * 1000 : 0 }, msg.id)
-          }
-        }
-        break
-
       // 错误
-      case 'error':
-        console.error('[WS] Agent 错误:', payload)
+      case 'error': {
+        const p = payload as { code: number; msg: string }
+        const errText = p.msg || ERROR_CODES[p.code] || '未知错误'
+        console.error(`[WS] Agent 错误 [${p.code}]: ${errText}`)
+        // 把错误消息也展示在对话中
+        chatStore.addMessage({
+          id: crypto.randomUUID(),
+          role: 'system',
+          content: `⚠️ ${errText}`,
+          timestamp: new Date().toISOString(),
+        })
         break
+      }
 
       // 心跳
       case 'heartbeat':
@@ -142,7 +163,6 @@ export function useWebSocket() {
       case 'play': {
         const p = payload as MusicPlayPayload
         if (p.song && p.play_url) {
-          // 转换新版 Song 格式为 playerStore 期望的格式
           playerStore.playSong({
             id: p.song.id,
             name: p.song.name,
@@ -156,16 +176,14 @@ export function useWebSocket() {
         break
       }
       case 'pause':
-        playerStore.togglePlay()  // 如果正在播放则暂停
+        if (playerStore.isPlaying) playerStore.togglePlay()
         break
       case 'resume':
-        playerStore.togglePlay()  // 如果暂停则恢复
+        if (!playerStore.isPlaying) playerStore.togglePlay()
         break
-      case 'skip': {
-        const p = payload as { song_id: string; reason: string }
+      case 'skip':
         playerStore.next()
         break
-      }
       case 'update_playlist': {
         const p = payload as { songs: Song[]; current_index: number }
         playerStore.queue = p.songs.map(s => ({
@@ -195,7 +213,7 @@ export function useWebSocket() {
   onUnmounted(() => disconnect())
 
   return {
-    ws, isConnected, sessionId, agentInfo,
+    ws, isConnected, sessionId, agentVersion,
     connect, disconnect, send,
   }
 }

@@ -1,4 +1,4 @@
-/** 音乐播放相关类型定义（v0.3 — 对齐 frontend-agent-api.md） */
+/** 音乐播放相关类型定义（v1.1 — 对齐 frontend-agent-api.md + 前端功能设计文档） */
 
 /** 艺人 */
 export interface Artist {
@@ -21,6 +21,22 @@ export interface Song {
   duration_ms: number        // 时长（毫秒）
   fee: number                // 0=免费 1=VIP 4=数字专辑 8=低质免费
   cover_url?: string         // 专辑封面 URL
+}
+
+/** 歌单（对齐文档 4.2 Playlist 结构） */
+export interface Playlist {
+  playlist_id: string        // 歌单唯一 ID
+  name: string               // 本地自定义名称
+  source_url: string         // 原始网易云分享链接
+  song_count: number         // 歌单歌曲总数
+  created_at: number         // 导入时间戳
+}
+
+/** 歌曲反馈（对齐文档 4.4 SongFeedback 结构） */
+export interface SongFeedback {
+  song_id: string
+  action: 'like' | 'dislike' | 'favorite' | 'skip'
+  ts: number
 }
 
 /** 音乐播放控制消息（WS music.* 相关） */

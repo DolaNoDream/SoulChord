@@ -1,22 +1,26 @@
-/** 用户画像相关类型定义（v0.3） */
+/** 用户画像相关类型定义（v1.1 — 对齐前端功能设计文档 4.1） */
 
-/** 用户基本信息（对齐 GET /api/init 的 user_profile） */
-export interface UserProfile {
-  name: string                      // 用户昵称
-  favorite_genres: string[]         // 喜欢的曲风
-  favorite_artists: string[]        // 喜欢的艺人（名字列表）
-  disliked_genres: string[]         // 不喜欢的曲风
-  created_at: number                // 创建时间（毫秒时间戳）
+/** 用户完整画像 UserProfits（对齐文档 4.1） */
+export interface UserProfits {
+  // 前端手动维护基础信息
+  nickname: string
+  avatar_url?: string
+  // AI 自动生成音乐偏好（不可手动编辑）
+  favorite_genres: string[]         // 喜爱曲风
+  favorite_artists: string[]        // 喜爱歌手
+  disliked_genres: string[]         // 排斥曲风
+  music_preference_desc: string     // 整体听歌偏好描述
+  AI_conclusion: string             // AI 一句话总结
+  update_at: number                 // 画像AI更新毫秒时间戳
 }
 
-/** Memory 条目 */
-export interface Memory {
-  key: string                           // 如 'favorite_genres'
-  category: 'profile' | 'preference' | 'context' | 'feedback'
-  value: unknown                        // 值
-  confidence: number                    // 0-1
-  source: 'user_input' | 'inferred' | 'feedback'
-  updated_at: number                    // 毫秒时间戳
+/** @deprecated 旧版用户信息（保留兼容，新代码请使用 UserProfits） */
+export interface UserProfile {
+  name: string
+  favorite_genres: string[]
+  favorite_artists: string[]
+  disliked_genres: string[]
+  created_at: number
 }
 
 /** 最近情绪记录 */
@@ -27,6 +31,6 @@ export interface RecentMood {
 
 /** Agent 信息 */
 export interface AgentInfo {
-  version: string           // 语义化版本
-  persona: string           // DJ 人格 ID
+  version: string
+  persona: string
 }

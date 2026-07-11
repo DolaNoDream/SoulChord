@@ -9,21 +9,32 @@ export const useSettingsStore = defineStore('settings', () => {
   const theme = ref<ThemeMode>('dark')
   const alwaysOnTop = ref(true)
   const language = ref<'zh-CN' | 'en-US'>('zh-CN')
-  const deepseekApiKey = ref('')
-  // 对齐 API 规范的三个 settings 字段
-  const djVoice = ref<'male_gentle' | 'female_warm' | 'male_lively'>('male_gentle')
-  const autoGreet = ref(true)
-  const persona = ref<'night_dj' | 'warm_companion' | 'energetic_jockey'>('night_dj')
+  // 对齐文档：LLM APIKey + 网易云 APIKey 分离
+  const llmApiKey = ref('')
+  const neteaseApiKey = ref('')
+  // 网易云登录状态
+  const neteaseLoginStatus = ref(false)
+  const neteaseNickname = ref('')
 
   const isDark = computed(() => theme.value === 'dark')
+  /** 是否配置了 LLM APIKey（未配置时 AI 对话、歌单画像分析禁用） */
+  const hasLlmKey = computed(() => llmApiKey.value.trim().length > 0)
+  /** 是否登录了网易云（未登录时歌单导入、音乐播放禁用） */
+  const hasNeteaseLogin = computed(() => neteaseLoginStatus.value)
 
-  /** 从后端 GET /api/init 的 settings 字段加载（优先级高于 localStorage） */
+  /** 从后端 GET /api/init 的 settings 字段加载 */
   function loadFromBackend(backendSettings: Record<string, unknown>) {
-    if (backendSettings.dj_voice) djVoice.value = backendSettings.dj_voice as typeof djVoice.value
-    if (typeof backendSettings.auto_greet === 'boolean') autoGreet.value = backendSettings.auto_greet
-    if (backendSettings.persona) persona.value = backendSettings.persona as typeof persona.value
+    if (typeof backendSettings.llm_apikey === 'string') llmApiKey.value = backendSettings.llm_apikey
+    if (typeof backendSettings.netease_apikey === 'string') neteaseApiKey.value = backendSettings.netease_apikey
     if (backendSettings.language) language.value = backendSettings.language as typeof language.value
-    persistToStorage() // 同步到本地
+    persistToStorage()
+  }
+
+  /** 加载网易云登录状态（来自 init/neteasestatus 接口） */
+  function setNeteaseStatus(status: boolean, nickname?: string) {
+    neteaseLoginStatus.value = status
+    if (nickname !== undefined) neteaseNickname.value = nickname
+    persistToStorage()
   }
 
   function loadFromStorage() {
@@ -31,7 +42,13 @@ export const useSettingsStore = defineStore('settings', () => {
       const stored = localStorage.getItem('soulchord-settings')
       if (stored) {
         const data = JSON.parse(stored)
-        Object.assign({ theme, alwaysOnTop, language, deepseekApiKey, djVoice, autoGreet, persona }, data)
+        if (data.llmApiKey) llmApiKey.value = data.llmApiKey
+        if (data.neteaseApiKey) neteaseApiKey.value = data.neteaseApiKey
+        if (data.theme) theme.value = data.theme
+        if (data.alwaysOnTop !== undefined) alwaysOnTop.value = data.alwaysOnTop
+        if (data.language) language.value = data.language
+        if (data.neteaseLoginStatus !== undefined) neteaseLoginStatus.value = data.neteaseLoginStatus
+        if (data.neteaseNickname) neteaseNickname.value = data.neteaseNickname
       }
     } catch { /* ignore */ }
   }
@@ -39,8 +56,10 @@ export const useSettingsStore = defineStore('settings', () => {
   function persistToStorage() {
     localStorage.setItem('soulchord-settings', JSON.stringify({
       theme: theme.value, alwaysOnTop: alwaysOnTop.value,
-      language: language.value, deepseekApiKey: deepseekApiKey.value,
-      djVoice: djVoice.value, autoGreet: autoGreet.value, persona: persona.value,
+      language: language.value, llmApiKey: llmApiKey.value,
+      neteaseApiKey: neteaseApiKey.value,
+      neteaseLoginStatus: neteaseLoginStatus.value,
+      neteaseNickname: neteaseNickname.value,
     }))
   }
 
@@ -52,23 +71,22 @@ export const useSettingsStore = defineStore('settings', () => {
   async function syncToBackend() {
     try {
       await updateSettings({
-        deepseek_api_key: deepseekApiKey.value,
-        language: language.value,
-        dj_voice: djVoice.value,
-        auto_greet: autoGreet.value,
-        persona: persona.value,
+        llm_apikey: llmApiKey.value,
+        netease_apikey: neteaseApiKey.value,
       })
     } catch { /* 后端不可用时忽略 */ }
   }
 
-  watch([theme, alwaysOnTop, language, deepseekApiKey, djVoice, autoGreet, persona], () => persistToStorage())
+  watch([theme, alwaysOnTop, language, llmApiKey, neteaseApiKey], () => persistToStorage())
 
   loadFromStorage()
 
   return {
-    theme, alwaysOnTop, language, deepseekApiKey, djVoice, autoGreet, persona,
-    isDark,
+    theme, alwaysOnTop, language, llmApiKey, neteaseApiKey,
+    neteaseLoginStatus, neteaseNickname,
+    isDark, hasLlmKey, hasNeteaseLogin,
     syncAlwaysOnTop, syncToBackend, loadFromStorage, loadFromBackend,
+    setNeteaseStatus,
     setTheme: (m: ThemeMode) => { theme.value = m },
   }
 })

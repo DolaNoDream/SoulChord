@@ -59,18 +59,22 @@ export function useElectron() {
           : [],
       })
 
-      // 设置媒体会话操作处理器
-      navigator.mediaSession.setActionHandler('play', () => {
-        // 由 playerStore 处理
+      // 设置媒体会话操作处理器（延迟导入避免循环依赖）
+      navigator.mediaSession.setActionHandler('play', async () => {
+        const { usePlayerStore } = await import('@/stores/player')
+        usePlayerStore().togglePlay()
       })
-      navigator.mediaSession.setActionHandler('pause', () => {
-        // 由 playerStore 处理
+      navigator.mediaSession.setActionHandler('pause', async () => {
+        const { usePlayerStore } = await import('@/stores/player')
+        usePlayerStore().togglePlay()
       })
-      navigator.mediaSession.setActionHandler('previoustrack', () => {
-        // 由 playerStore 处理
+      navigator.mediaSession.setActionHandler('previoustrack', async () => {
+        const { usePlayerStore } = await import('@/stores/player')
+        usePlayerStore().prev()
       })
-      navigator.mediaSession.setActionHandler('nexttrack', () => {
-        // 由 playerStore 处理
+      navigator.mediaSession.setActionHandler('nexttrack', async () => {
+        const { usePlayerStore } = await import('@/stores/player')
+        usePlayerStore().next()
       })
     }
 

@@ -1,12 +1,11 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import type { UserProfile, Memory, AgentInfo } from '@/types/user'
-import { fetchInit, updateUserProfile, queryMemory } from '@/api/agent'
+import type { UserProfits, AgentInfo } from '@/types/user'
+import { fetchInit, getUserProfile, updateUserBaseInfo, triggerAnalyze } from '@/api/agent'
 
 export const useUserStore = defineStore('user', () => {
   // ========== 状态 ==========
-  const profile = ref<UserProfile | null>(null)
-  const memories = ref<Memory[]>([])
+  const profile = ref<UserProfits | null>(null)
   const agentInfo = ref<AgentInfo | null>(null)
   const isProfileLoaded = ref(false)
   const isAnalyzing = ref(false)
@@ -14,11 +13,12 @@ export const useUserStore = defineStore('user', () => {
   // ========== 计算属性 ==========
   const topGenres = computed(() => profile.value?.favorite_genres?.slice(0, 5) ?? [])
   const topArtists = computed(() => profile.value?.favorite_artists?.slice(0, 5) ?? [])
-  const nickname = computed(() => profile.value?.name ?? '音乐探索者')
+  const nickname = computed(() => profile.value?.nickname ?? '音乐探索者')
+  const avatarUrl = computed(() => profile.value?.avatar_url ?? '')
 
   // ========== 方法 ==========
 
-  /** 启动时调用：拉取 init 数据（用户画像 + Agent 信息） */
+  /** 启动时调用：拉取 init 数据 */
   async function loadInit(): Promise<void> {
     isAnalyzing.value = true
     try {
@@ -33,43 +33,61 @@ export const useUserStore = defineStore('user', () => {
     }
   }
 
-  /** 更新用户偏好 */
-  async function updatePreferences(prefs: {
-    favorite_genres?: string[]
-    favorite_artists?: string[]
-    disliked_genres?: string[]
-  }): Promise<void> {
-    await updateUserProfile(prefs)
-    if (profile.value) {
-      if (prefs.favorite_genres) profile.value.favorite_genres = prefs.favorite_genres
-      if (prefs.favorite_artists) profile.value.favorite_artists = prefs.favorite_artists
-      if (prefs.disliked_genres) profile.value.disliked_genres = prefs.disliked_genres
-    }
-  }
-
-  /** 加载 Memory */
-  async function loadMemories(): Promise<void> {
+  /** 加载用户完整画像（GET /api/user/profile） */
+  async function loadProfile(): Promise<void> {
     try {
-      const data = await queryMemory()
-      memories.value = data.memories
+      const p = await getUserProfile()
+      profile.value = p
+      isProfileLoaded.value = true
     } catch { /* 静默失败 */ }
   }
 
-  /** 修改昵称 */
+  /** 手动触发AI画像分析（POST /api/user/analyze） */
+  async function requestAnalyze(): Promise<{ update_at: number } | null> {
+    isAnalyzing.value = true
+    try {
+      const result = await triggerAnalyze()
+      // 分析完成后自动刷新画像
+      await loadProfile()
+      return result
+    } catch {
+      return null
+    } finally {
+      isAnalyzing.value = false
+    }
+  }
+
+  /** 修改昵称/头像（PUT /api/user/baseinfo） */
+  async function updateBaseInfo(nickname?: string, avatarUrl?: string): Promise<void> {
+    try {
+      await updateUserBaseInfo({ nickname, avatar_url: avatarUrl })
+      if (profile.value) {
+        if (nickname) profile.value.nickname = nickname
+        if (avatarUrl) profile.value.avatar_url = avatarUrl
+      }
+    } catch { /* 静默失败 */ }
+  }
+
+  /** 更新本地昵称 */
   async function updateNickname(name: string): Promise<void> {
     if (!profile.value) {
-      profile.value = { name, favorite_genres: [], favorite_artists: [], disliked_genres: [], created_at: Date.now() }
+      profile.value = {
+        nickname: name, avatar_url: '',
+        favorite_genres: [], favorite_artists: [], disliked_genres: [],
+        music_preference_desc: '', AI_conclusion: '', update_at: 0,  // 0 表示尚未进行 AI 分析
+      }
     } else {
-      profile.value.name = name
+      profile.value.nickname = name
     }
     localStorage.setItem('soulchord-nickname', name)
-    try { await updateUserProfile({}) } catch { /* 离线时忽略 */ }
+    try { await updateUserBaseInfo({ nickname: name }) } catch { /* 离线时忽略 */ }
   }
 
   /** 更换头像（本地持久化） */
   function updateAvatar(dataUrl: string) {
     localStorage.setItem('soulchord-avatar', dataUrl)
-    // 头像仅本地存储，后端不管理
+    // 同步到后端
+    updateUserBaseInfo({ avatar_url: dataUrl }).catch(() => {})
   }
 
   /** 本地缓存的头像 */
@@ -83,9 +101,9 @@ export const useUserStore = defineStore('user', () => {
   }
 
   return {
-    profile, memories, agentInfo, isProfileLoaded, isAnalyzing,
-    topGenres, topArtists, nickname,
-    loadInit, updatePreferences, loadMemories, updateNickname, updateAvatar,
-    getLocalAvatar, getLocalNickname,
+    profile, agentInfo, isProfileLoaded, isAnalyzing,
+    topGenres, topArtists, nickname, avatarUrl,
+    loadInit, loadProfile, requestAnalyze, updateBaseInfo,
+    updateNickname, updateAvatar, getLocalAvatar, getLocalNickname,
   }
 })
