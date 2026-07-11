@@ -1,54 +1,85 @@
-/** AI 对话相关类型定义 */
+/** AI 对话 / WebSocket 消息相关类型定义（v0.3） */
 
-import type { Song, Playlist, EmotionType, ScenarioType } from './music'
+import type { Song } from './music'
 
-/** 消息角色 */
-export type MessageRole =
-  | 'user'       // 用户发送的消息
-  | 'assistant'  // AI DJ 的回复
-  | 'system'     // 系统通知（如连接状态、引导提示）
+// ===== WS 统一消息信封 =====
 
-/** 对话附件类型（消息中可携带的富媒体内容） */
-export type ChatAttachment =
-  | { type: 'song'; song: Song; reason: string }            // 歌曲推荐 + 推荐理由
-  | { type: 'playlist'; playlist: Playlist; reason: string } // 歌单推荐 + 推荐理由
-  | { type: 'image'; url: string; caption: string }         // 图片 + 说明文字
+/** WS 消息类型（7 种枚举） */
+export type WsMessageType =
+  | 'chat'       // 对话
+  | 'tool_call'  // 工具调用（debug）
+  | 'tts'        // 语音合成
+  | 'music'      // 音乐控制
+  | 'status'     // 系统状态
+  | 'error'      // 错误
+  | 'heartbeat'  // 心跳
 
-/** 对话消息 */
-export interface ChatMessage {
-  id: string              // 消息唯一标识
-  role: MessageRole       // 发送者角色
-  content: string         // 消息正文（纯文本）
-  timestamp: string       // 发送时间（ISO 8601 格式）
-  attachments?: ChatAttachment[]  // 附件列表（歌曲、歌单、图片等，可选）
-  isStreaming?: boolean   // 是否正在流式输出中（AI 回复逐字显示时）
-  emotion?: EmotionType   // AI DJ 回复时带有的情绪色彩
+/** WS 消息统一格式 */
+export interface WsMessage<T = unknown> {
+  type: WsMessageType
+  subtype?: string
+  id?: string               // 请求-响应匹配用
+  ts?: number               // 毫秒时间戳
+  payload: T
 }
 
-/** 快捷场景（预设的对话入口按钮） */
+// ===== 对话消息 =====
+
+/** 用户文本输入 */
+export interface ChatUserTextPayload {
+  text: string
+  source: 'chat' | 'voice'
+}
+
+/** Agent 回复（核心消息） */
+export interface ChatReplyPayload {
+  reply: string                       // AI 文字回复
+  emotion?: string                    // 推断的用户情绪
+  intent?: string                     // chat | request_music | skip | ...
+  scene?: string                      // 当前场景
+  confidence?: number                 // 置信度 0-1
+  decision_summary?: string           // Agent 决策摘要
+  should_speak: boolean               // 是否主动说话
+  should_play_music: boolean          // 是否切歌/推荐
+  agent?: {
+    version: string
+    persona: string
+  }
+}
+
+// ===== 快捷场景 =====
+
 export interface QuickScene {
-  id: string              // 场景唯一标识
-  label: string           // 按钮显示文字（如"有点累"）
-  icon: string            // 按钮图标名（Element Plus 图标组件名）
-  promptTemplate: string  // 点击后发送给 AI 的预设提问
-  scenario: ScenarioType  // 关联的场景类型
+  id: string              // 场景 ID
+  label: string           // 按钮文字
+  icon: string            // 图标名
+  promptTemplate: string  // 预设提问
+  scenario: string        // 关联场景
 }
 
-/** 对话会话（一次完整的聊天记录） */
+// ===== 对话会话 =====
+
 export interface ConversationSession {
-  id: string              // 会话唯一标识
-  startedAt: string       // 会话开始时间（ISO 8601 格式）
-  lastMessageAt: string   // 最后一条消息时间（ISO 8601 格式）
-  messageCount: number    // 消息总数
-  summary: string         // AI 生成的会话摘要（一句话概括）
+  id: string
+  startedAt: string
+  lastMessageAt: string
+  messageCount: number
+  summary: string
 }
 
-/** 聊天状态（Pinia store 数据结构） */
-export interface ChatState {
-  messages: ChatMessage[]           // 消息列表
-  isStreaming: boolean              // AI 是否正在回复中
-  currentStreamingMessage: string   // 当前正在流式输出的文字
-  inputText: string                 // 输入框中的文字
-  conversationId: string | null     // 当前会话 ID
-  quickScenes: QuickScene[]         // 快捷场景按钮列表
+/** 前端 UI 中使用的消息（兼容 WS 消息结构） */
+export interface ChatMessage {
+  id: string
+  role: 'user' | 'assistant' | 'system'
+  content: string
+  timestamp: string
+  attachments?: ChatAttachment[]
+  isStreaming?: boolean
+  emotion?: string
+  intent?: string
 }
+
+export type ChatAttachment =
+  | { type: 'song'; song: Song; reason: string }
+  | { type: 'playlist'; songs: Song[]; reason: string }
+  | { type: 'image'; url: string; caption: string }

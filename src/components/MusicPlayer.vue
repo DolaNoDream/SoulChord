@@ -67,10 +67,10 @@ import { watch } from 'vue'
 watch(() => playerStore.currentSong, (song) => {
   if (song) {
     updateMediaMetadata({
-      title: song.title,
-      artist: song.artist,
-      album: song.album,
-      artwork: song.coverUrl || undefined,
+      title: song.name,
+      artist: song.artists?.[0]?.name ?? '',
+      album: song.album?.name ?? '',
+      artwork: song.cover_url || undefined,
     })
   }
 })
@@ -81,9 +81,9 @@ watch(() => playerStore.currentSong, (song) => {
     <!-- 封面区域 -->
     <div class="music-player__cover">
       <img
-        v-if="playerStore.currentSong?.coverUrl"
-        :src="playerStore.currentSong.coverUrl"
-        :alt="playerStore.currentSong?.title"
+        v-if="playerStore.currentSong?.cover_url"
+        :src="playerStore.currentSong.cover_url"
+        :alt="playerStore.currentSong?.name"
         class="music-player__cover-img"
         :class="{ 'music-player__cover-img--playing': playerStore.isPlaying }"
       />
@@ -95,13 +95,13 @@ watch(() => playerStore.currentSong, (song) => {
     <!-- 歌曲信息 -->
     <div class="music-player__info">
       <h2 class="music-player__title">
-        {{ playerStore.currentSong?.title ?? '未在播放' }}
+        {{ playerStore.currentSong?.name ?? '未在播放' }}
       </h2>
       <p class="music-player__artist">
-        {{ playerStore.currentSong?.artist ?? '选择一首歌开始吧' }}
+        {{ playerStore.currentSong?.artists?.[0]?.name ?? '选择一首歌开始吧' }}
       </p>
-      <p v-if="playerStore.currentSong?.reason" class="music-player__reason">
-        💬 {{ playerStore.currentSong.reason }}
+      <p v-if="playerStore.playReason" class="music-player__reason">
+        💬 {{ playerStore.playReason }}
       </p>
     </div>
 
@@ -128,12 +128,12 @@ watch(() => playerStore.currentSong, (song) => {
       <span class="music-player__time">{{ formatTime(playerStore.duration) }}</span>
     </div>
 
-    <!-- 喜欢/踩 -->
+    <!-- 喜欢 / 不喜欢 -->
     <div class="music-player__feedback">
       <button
         class="music-player__feedback-btn"
         :class="{ 'music-player__feedback-btn--active': playerStore.isLiked }"
-        title="喜欢"
+        title="喜欢/收藏"
         :disabled="!playerStore.currentSong"
         @click="playerStore.toggleLike()"
       >
@@ -141,12 +141,11 @@ watch(() => playerStore.currentSong, (song) => {
       </button>
       <button
         class="music-player__feedback-btn"
-        :class="{ 'music-player__feedback-btn--active': playerStore.isDisliked }"
         title="不喜欢"
         :disabled="!playerStore.currentSong"
-        @click="playerStore.toggleDislike()"
+        @click="playerStore.dislike()"
       >
-        {{ playerStore.isDisliked ? '👎' : '👎' }}
+        👎
       </button>
     </div>
 

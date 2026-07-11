@@ -60,9 +60,9 @@ function emotionLabel(emotion: string): string {
   >
     <div class="song-card__cover">
       <img
-        v-if="song.coverUrl"
-        :src="song.coverUrl"
-        :alt="song.title"
+        v-if="song.cover_url"
+        :src="song.cover_url"
+        :alt="song.name"
         class="song-card__cover-img"
       />
       <div v-else class="song-card__cover-placeholder">
@@ -75,16 +75,16 @@ function emotionLabel(emotion: string): string {
     </div>
 
     <div class="song-card__info">
-      <h4 class="song-card__title">{{ song.title }}</h4>
-      <p class="song-card__artist">{{ song.artist }}</p>
-      <p v-if="showReason && song.reason" class="song-card__reason">
-        💬 {{ song.reason }}
+      <h4 class="song-card__title">{{ song.name }}</h4>
+      <p class="song-card__artist">{{ song.artists.map(a => a.name).join(' / ') }}</p>
+      <p v-if="showReason && playerStore.playReason" class="song-card__reason">
+        💬 {{ playerStore.playReason }}
       </p>
     </div>
 
     <div v-if="!compact" class="song-card__meta">
-      <span class="song-card__duration">{{ formatDuration(song.duration) }}</span>
-      <span v-if="song.emotion" class="song-card__emotion">{{ emotionLabel(song.emotion) }}</span>
+      <span class="song-card__duration">{{ formatDuration(song.duration_ms) }}</span>
+      <!-- emotion not in Song v0.3 -->
     </div>
   </div>
 </template>

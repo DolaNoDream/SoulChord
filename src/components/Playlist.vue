@@ -10,7 +10,7 @@ defineProps<{
 const playerStore = usePlayerStore()
 
 function handlePlay(song: Song) {
-  playerStore.playSong(song)
+  playerStore.playSong(song, '') // play_url will be fetched separately
 }
 
 function handleClearQueue() {

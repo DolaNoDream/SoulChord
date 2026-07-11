@@ -71,7 +71,7 @@ function formatTime(timestamp: string): string {
             />
           </div>
           <div v-else-if="att.type === 'playlist'" class="chat-bubble__playlist-attachment">
-            <p class="chat-bubble__playlist-name">📻 {{ att.playlist.name }}</p>
+            <p class="chat-bubble__playlist-name">📻 推荐歌单</p>
             <p class="chat-bubble__playlist-reason">{{ att.reason }}</p>
           </div>
         </template>

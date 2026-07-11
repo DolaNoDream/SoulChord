@@ -1,13 +1,6 @@
 <script setup lang="ts">
 import { usePlayerStore } from '@/stores/player'
-import { useSettingsStore } from '@/stores/settings'
-
 const playerStore = usePlayerStore()
-const settingsStore = useSettingsStore()
-
-function handleExpand() {
-  settingsStore.toggleMiniMode()
-}
 </script>
 
 <template>
@@ -18,9 +11,9 @@ function handleExpand() {
     <!-- 封面 -->
     <div class="mini-window__cover">
       <img
-        v-if="playerStore.currentSong?.coverUrl"
-        :src="playerStore.currentSong.coverUrl"
-        :alt="playerStore.currentSong?.title"
+        v-if="playerStore.currentSong?.cover_url"
+        :src="playerStore.currentSong.cover_url"
+        :alt="playerStore.currentSong?.name"
         class="mini-window__cover-img"
         :class="{ 'mini-window__cover-img--playing': playerStore.isPlaying }"
       />
@@ -32,10 +25,10 @@ function handleExpand() {
     <!-- 歌曲信息 -->
     <div class="mini-window__info">
       <p class="mini-window__title">
-        {{ playerStore.currentSong?.title ?? 'SoulChord' }}
+        {{ playerStore.currentSong?.name ?? 'SoulChord' }}
       </p>
       <p class="mini-window__artist">
-        {{ playerStore.currentSong?.artist ?? 'AI 音乐电台' }}
+        {{ (playerStore.currentSong?.artists && playerStore.currentSong.artists[0]?.name) ?? 'AI 音乐电台' }}
       </p>
     </div>
 
@@ -51,9 +44,7 @@ function handleExpand() {
     </button>
 
     <!-- 展开按钮 -->
-    <button class="mini-window__expand-btn" title="展开" @click="handleExpand">
-      ⬈
-    </button>
+    <!-- 展开按钮暂不可用 -->
 
     <!-- 迷你进度条 -->
     <div class="mini-window__progress">

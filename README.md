@@ -16,10 +16,11 @@ SoulChord 是一款基于 AI Agent 的桌面音乐电台应用，模拟一位 24
 | **UI 框架** | Vue 3 + TypeScript | 核心前端框架，组合式 API |
 | **构建工具** | Vite | 极速 HMR 开发体验 |
 | **状态管理** | Pinia | 全局状态管理（播放器、对话、用户画像） |
-| **组件库** | Element Plus | 基础 UI 组件（按钮、对话框、表单等） |
+| **组件库** | Element Plus | 基础 UI 组件（开关、对话框等） |
+| **通信** | WebSocket（主）+ HTTP（补充） | 实时双向通信，SSE 已被 WS 替代 |
 | **音频播放** | Web Audio API | 音乐播放控制 |
-| **动画** | CSS Animations / Live2D Cubism SDK | AI DJ 角色动画 |
 | **打包分发** | electron-builder | 桌面应用打包 |
+| **接口规范** | [frontend-agent-api.md](../实训项目/frontend-agent-api.md) | 前后端契约 v0.3 |
 
 ---
 
@@ -62,26 +63,24 @@ SoulChord/
     │   └── settings.ts            设置：主题、窗口模式、始终置顶、语言
     │
     ├── api/                       🌐 API 请求层
-    │   ├── agent.ts               与后端 FastAPI Agent 通信（聊天、推荐、画像分析）
-    │   └── music.ts               音乐 API（搜索、歌单）+ Mock 模拟数据（后端不可用时）
+    │   └── agent.ts               HTTP 接口 + WebSocket 连接工厂
     │
     ├── composables/               🔧 组合式函数
     │   ├── useAudio.ts            音频引擎：HTMLAudioElement 封装，与 PlayerStore 同步
-    │   ├── useChat.ts             对话逻辑：发送消息、流式接收、场景触发
-    │   └── useElectron.ts         Electron API 封装：窗口控制、媒体会话
+    │   ├── useChat.ts             对话逻辑：本地消息管理 + WS 发送
+    │   ├── useElectron.ts         Electron API 封装：窗口控制、媒体会话
+    │   └── useWebSocket.ts        WebSocket 连接管理：7 种消息类型分发
     │
     ├── components/                🎨 UI 组件
-    │   ├── MusicPlayer.vue        完整播放器：封面、进度条、播放/暂停/上下首、音量
-    │   ├── SongCard.vue           歌曲卡片：封面、歌名、情绪标签、AI 推荐理由
-    │   ├── Playlist.vue           播放列表：当前播放、等待队列、清空
-    │   ├── ChatBubble.vue         对话气泡：用户/AI 消息、流式动画、内嵌歌曲推荐
-    │   └── MiniWindow.vue         迷你悬浮窗：紧凑播放条、拖拽、展开按钮
+    │   ├── MusicPlayer.vue        完整播放器：封面、进度条、播放/暂停/上下首、❤️喜欢
+    │   ├── SongCard.vue           歌曲卡片：封面、歌名、艺人
+    │   ├── Playlist.vue           播放列表：当前播放、等待队列
+    │   ├── ChatBubble.vue         对话气泡：用户/AI 消息、内嵌歌曲推荐
+    │   ├── MiniWindow.vue         迷你悬浮窗：紧凑播放条
+    │   └── SettingsDrawer.vue     设置面板：头像、昵称、API Key、偏好
     │
     ├── views/                     📄 页面视图
-    │   ├── HomeView.vue           首页：播放器 + 今日推荐歌单 + 播放队列
-    │   ├── ChatView.vue           AI DJ 对话页：消息列表、输入框、快捷场景按钮
-    │   └── ProfileView.vue        个人页：音乐DNA可视化、风格/艺人偏好
-    │
+    │   └── DashboardView.vue      主界面：播放器 + AI DJ 对话（WS 通信）
     ├── router/                    🧭 路由
     │   └── index.ts               路由表：/ → 首页、/chat → AI DJ、/profile → 我的
     │
@@ -152,24 +151,42 @@ SoulChord/
 ## 前后端通信架构
 
 ```
-┌─────────────────────────────────────────┐
-│           Electron 桌面应用              │
-│  ┌───────────────────────────────────┐  │
-│  │        Vue3 渲染进程               │  │
-│  │   • 播放器 UI                     │  │
-│  │   • AI 对话界面                   │  │
-│  │   • 歌单展示                      │  │
-│  └──────────┬────────────────────────┘  │
-│             │ HTTP / WebSocket           │
-│  ┌──────────▼────────────────────────┐  │
-│  │    Python FastAPI (本地 Agent)     │  │
-│  │   • LangChain/LangGraph Agent     │  │
-│  │   • LLM 调用 (DeepSeek)           │  │
-│  │   • SQLite 记忆存储               │  │
-│  │   • TTS 语音合成                  │  │
-│  │   • 音乐 API 代理                 │  │
-│  └───────────────────────────────────┘  │
-└─────────────────────────────────────────┘
+┌──────────────────────────────────────────────┐
+│              Electron 桌面应用                │
+│  ┌──────────────────────────────────────┐   │
+│  │          Vue3 渲染进程                 │   │
+│  │   • 播放器 UI                         │   │
+│  │   • AI 对话界面                        │   │
+│  │   • 设置面板                           │   │
+│  └───────┬──────────────────────────────┘   │
+│          │                                   │
+│          │ WebSocket（主通道）                │
+│          │ ws://localhost:8000/ws/client     │
+│          │ • chat.user_text / chat.reply    │
+│          │ • music.play / pause / skip      │
+│          │ • tts.synthesize / played        │
+│          │ • status.expression              │
+│          │ • heartbeat ping/pong            │
+│          │                                   │
+│          │ HTTP（补充通道）                   │
+│          │ http://localhost:8000/api/        │
+│          │ • GET  /init                     │
+│          │ • GET  /settings                 │
+│          │ • PUT  /settings                 │
+│          │ • POST /feedback                 │
+│          │ • GET  /history/songs            │
+│          │ • POST /user/profile             │
+│          │ • GET/POST/DELETE /memory/*       │
+│          │                                   │
+│  ┌───────▼──────────────────────────────┐   │
+│  │      Python FastAPI (本地 Agent)      │   │
+│  │   • LangChain/LangGraph Agent        │   │
+│  │   • LLM 调用 (DeepSeek)              │   │
+│  │   • SQLite 记忆存储                   │   │
+│  │   • TTS 语音合成                      │   │
+│  │   • 网易云音乐 API 代理               │   │
+│  └──────────────────────────────────────┘   │
+└──────────────────────────────────────────────┘
 ```
 
 ---
@@ -234,26 +251,25 @@ npm install electron
 ### 5. 启动项目
 
 ```bash
-# Web 开发模式（推荐，不需要 Electron）
-npm run dev
+# 纯 Web 模式（推荐，浏览器打开，不弹 Electron 窗口）
+npm run dev:web
 ```
 
-终端会显示：
+终端显示：
 ```
 VITE v6.x  ready in xxx ms
 ➜  Local:   http://localhost:5173/
 ```
 
-浏览器打开 **`http://localhost:5173/`** 即可看到 SoulChord 界面。修改代码后页面会自动刷新。
+浏览器打开 **`http://localhost:5173/`**，同时会自动连接后端 WebSocket `ws://localhost:8000/ws/client`。
 
-### 6. 其他常用命令
+### 6. 常用命令
 
 ```bash
-npm run dev          # 启动 Electron 桌面模式（会弹出桌面窗口）
-npm run dev:web      # 启动纯 Web 模式（浏览器打开，不弹窗）★ 后端联调时用这个
-npm run build        # 构建生产版本（输出到 dist/ 和 dist-electron/）
+npm run dev:web      # 纯 Web 模式 ★ 后端联调用这个
+npm run dev          # Electron 桌面模式（弹出窗口）
+npm run build        # 构建生产版本
 npm run typecheck    # TypeScript 类型检查
-npm run preview      # 预览构建后的生产版本
 ```
 
 ### 7. VSCode 插件（建议安装）

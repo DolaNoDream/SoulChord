@@ -1,163 +1,140 @@
 /**
- * AI Agent 通信层
- * 与本地 Python FastAPI Agent 通过 HTTP 通信
+ * AI Agent 通信层（v0.3 — 对齐 frontend-agent-api.md）
+ * 通道：WebSocket（主）+ HTTP（补充）
  */
 import axios, { type AxiosInstance } from 'axios'
-import type { ChatMessage } from '@/types/chat'
-import type { Playlist } from '@/types/music'
-import type { UserProfile, MusicDNA } from '@/types/user'
 import type { Song } from '@/types/music'
+import type { UserProfile, Memory, RecentMood, AgentInfo } from '@/types/user'
 
-/** Agent API 基础地址（本地 FastAPI） */
-const AGENT_BASE_URL = 'http://localhost:8000/api'
+/** Agent 基础地址 */
+const AGENT_BASE_URL = 'http://localhost:8000'
+const WS_URL = 'ws://localhost:8000/ws/client'
 
-/** 创建 axios 实例 */
+// ===== Axios 实例 =====
 const http: AxiosInstance = axios.create({
-  baseURL: AGENT_BASE_URL,
+  baseURL: `${AGENT_BASE_URL}/api`,
   timeout: 30000,
-  headers: {
-    'Content-Type': 'application/json',
-  },
+  headers: { 'Content-Type': 'application/json' },
 })
 
-// 响应拦截器：统一解包 {error, data} → 直接返回 data
+// 响应拦截器：检查 {code, msg, data} 格式
 http.interceptors.response.use(
   (res) => {
     const body = res.data
-    // 如果后端按 {error: false, data: {...}} 格式返回，自动解包
-    if (body && typeof body === 'object' && 'error' in body && 'data' in body) {
-      if (body.error) {
-        return Promise.reject(new Error(body.message || '请求失败'))
+    if (body && typeof body === 'object' && 'code' in body) {
+      if (body.code !== 0) {
+        return Promise.reject(new Error(body.msg || `Error code ${body.code}`))
       }
       return { ...res, data: body.data }
     }
     return res
   },
-  (err) => {
-    // 网络错误或 HTTP 错误
-    return Promise.reject(err)
-  }
+  (err) => Promise.reject(err)
 )
 
-/** 健康检查 */
-export async function healthCheck(): Promise<boolean> {
-  try {
-    const res = await http.get('/health')
-    return res.status === 200
-  } catch {
-    return false
+// ===== HTTP 接口 =====
+
+/** 1.1 启动初始化：拉取用户画像、情绪、当前状态 */
+export async function fetchInit(): Promise<{
+  agent: AgentInfo
+  user_profile: UserProfile
+  recent_moods: RecentMood[]
+  current_state: {
+    is_playing: boolean
+    current_song: Song | null
+    scene: string
+    active_expression: string
   }
-}
-
-/** 发送流式对话消息（SSE 逐字推送） */
-export async function sendStreamMessage(
-  text: string,
-  conversationId: string | null,
-  onChunk: (chunk: string) => void,
-  onDone: (fullMessage: ChatMessage) => void,
-  onError: (err: Error) => void
-): Promise<void> {
-  try {
-    const res = await fetch(`${AGENT_BASE_URL}/chat/stream`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message: text, conversation_id: conversationId }),
-    })
-
-    if (!res.ok || !res.body) {
-      throw new Error(`HTTP ${res.status}`)
-    }
-
-    const reader = res.body.getReader()
-    const decoder = new TextDecoder()
-    let fullText = ''
-
-    while (true) {
-      const { done, value } = await reader.read()
-      if (done) break
-
-      const chunk = decoder.decode(value, { stream: true })
-      fullText += chunk
-      onChunk(chunk)
-    }
-
-    const fullMessage: ChatMessage = {
-      id: `msg_${Date.now()}`,
-      role: 'assistant',
-      content: fullText,
-      timestamp: new Date().toISOString(),
-    }
-    onDone(fullMessage)
-  } catch (err) {
-    onError(err instanceof Error ? err : new Error(String(err)))
-  }
-}
-
-/** 触发快捷场景（预设按钮） */
-export async function triggerScene(
-  sceneId: string,
-  promptTemplate: string
-): Promise<ChatMessage> {
-  const res = await http.post('/scene', {
-    scene_id: sceneId,
-    prompt: promptTemplate,
-  })
-  return res.data
-}
-
-/** 获取今日推荐歌单 */
-export async function getRecommendations(params?: {
-  scenario?: string
-  mood?: string
-}): Promise<Playlist> {
-  const res = await http.get('/recommendations', { params })
-  return res.data
-}
-
-/** 获取用户音乐画像 */
-export async function getUserProfile(): Promise<{
-  profile: UserProfile
-  musicDNA: MusicDNA
+  settings: Record<string, unknown>
 }> {
-  const res = await http.get('/profile')
+  const res = await http.get('/init')
   return res.data
 }
 
-/** 分析用户喜欢的歌曲，生成音乐DNA */
-export async function analyzeProfile(songs: Song[]): Promise<{
-  profile: UserProfile
-  musicDNA: MusicDNA
-}> {
-  const res = await http.post('/profile/analyze', {
-    favorite_songs: songs.map(s => ({
-      title: s.title,
-      artist: s.artist,
-      genres: s.genres,
-    })),
-  })
+/** 1.2 获取设置 */
+export async function getSettings(): Promise<Record<string, unknown>> {
+  const res = await http.get('/settings')
   return res.data
 }
 
-/** 歌曲反馈（喜欢/不喜欢） */
-export async function sendSongFeedback(
-  songId: string,
-  feedback: 'like' | 'dislike'
-): Promise<void> {
-  await http.post('/feedback', { song_id: songId, feedback })
+/** 1.3 更新设置（增量） */
+export async function updateSettings(data: Record<string, unknown>): Promise<void> {
+  await http.put('/settings', data)
 }
 
-/** 更新用户基本信息（昵称、头像等） */
-export async function updateProfile(data: {
-  nickname?: string
-  avatarUrl?: string
+/** 1.4 歌曲反馈 */
+export async function sendFeedback(params: {
+  song_id: string
+  action: 'like' | 'dislike' | 'skip' | 'favorite'
 }): Promise<void> {
-  await http.put('/profile', data)
+  await http.post('/feedback', { ...params, ts: Date.now() })
 }
 
-/** 向后端发送 DeepSeek API Key（后端存入 SQLite，后续请求不再传） */
-export async function sendApiKey(apiKey: string): Promise<void> {
-  if (!apiKey) return
-  await http.put('/config', { deepseek_api_key: apiKey })
+/** 1.5 播放历史 */
+export async function fetchSongHistory(limit = 50, offset = 0): Promise<{
+  total: number
+  items: Array<{
+    song_id: string
+    played_at: number
+    feedback: string
+    duration_played_ms: number
+  }>
+}> {
+  const res = await http.get('/history/songs', { params: { limit, offset } })
+  return res.data
 }
 
-export { http }
+/** 1.6 更新用户画像偏好 */
+export async function updateUserProfile(data: {
+  favorite_genres?: string[]
+  favorite_artists?: string[]
+  disliked_genres?: string[]
+}): Promise<void> {
+  await http.post('/user/profile', data)
+}
+
+/** 1.7 查询 Memory */
+export async function queryMemory(params?: {
+  key?: string
+  category?: 'profile' | 'preference' | 'context' | 'feedback'
+}): Promise<{ memories: Memory[] }> {
+  const res = await http.get('/memory/query', { params })
+  return res.data
+}
+
+/** 1.8 更新 Memory */
+export async function updateMemory(data: {
+  key: string
+  category: 'profile' | 'preference' | 'context' | 'feedback'
+  value: unknown
+  source?: 'user_input' | 'inferred' | 'feedback'
+}): Promise<{ updated: boolean; ts: number }> {
+  const res = await http.post('/memory/update', { ...data, source: data.source || 'user_input' })
+  return res.data
+}
+
+/** 1.9 删除 Memory */
+export async function deleteMemory(key: string): Promise<void> {
+  await http.delete(`/memory/${key}`)
+}
+
+// ===== WebSocket 连接 =====
+
+/** 创建 WebSocket 连接 */
+export function createAgentSocket(): WebSocket {
+  const ws = new WebSocket(WS_URL)
+  return ws
+}
+
+/** 构建 WS 消息 */
+export function buildWsMsg<T>(type: string, subtype: string, payload: T, id?: string): string {
+  return JSON.stringify({
+    type,
+    subtype,
+    id: id || crypto.randomUUID(),
+    ts: Date.now(),
+    payload,
+  })
+}
+
+export { http, AGENT_BASE_URL, WS_URL }
