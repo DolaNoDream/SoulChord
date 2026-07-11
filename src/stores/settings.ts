@@ -8,51 +8,56 @@ export const useSettingsStore = defineStore('settings', () => {
   // ========== 状态 ==========
   const theme = ref<ThemeMode>('dark')
   const alwaysOnTop = ref(true)
-  const autoplayOnLaunch = ref(true)
-  const showDJEmotion = ref(true)
   const language = ref<'zh-CN' | 'en-US'>('zh-CN')
   const deepseekApiKey = ref('')
+  // 对齐 API 规范的三个 settings 字段
+  const djVoice = ref<'male_gentle' | 'female_warm' | 'male_lively'>('male_gentle')
+  const autoGreet = ref(true)
+  const persona = ref<'night_dj' | 'warm_companion' | 'energetic_jockey'>('night_dj')
 
   const isDark = computed(() => theme.value === 'dark')
 
-  // ========== 方法 ==========
   function loadFromStorage() {
     try {
       const stored = localStorage.getItem('soulchord-settings')
       if (stored) {
         const data = JSON.parse(stored)
-        Object.assign({ theme, alwaysOnTop, autoplayOnLaunch, showDJEmotion, language, deepseekApiKey }, data)
+        Object.assign({ theme, alwaysOnTop, language, deepseekApiKey, djVoice, autoGreet, persona }, data)
       }
     } catch { /* ignore */ }
   }
 
   function persistToStorage() {
     localStorage.setItem('soulchord-settings', JSON.stringify({
-      theme: theme.value, alwaysOnTop: alwaysOnTop.value, autoplayOnLaunch: autoplayOnLaunch.value,
-      showDJEmotion: showDJEmotion.value, language: language.value, deepseekApiKey: deepseekApiKey.value,
+      theme: theme.value, alwaysOnTop: alwaysOnTop.value,
+      language: language.value, deepseekApiKey: deepseekApiKey.value,
+      djVoice: djVoice.value, autoGreet: autoGreet.value, persona: persona.value,
     }))
   }
 
-  /** 同步置顶到 Electron 窗口 */
   function syncAlwaysOnTop() {
     if (window.electronAPI) window.electronAPI.setAlwaysOnTop(alwaysOnTop.value)
   }
 
-  /** 同步设置到后端 */
+  /** 同步到后端 PUT /api/settings（增量更新） */
   async function syncToBackend() {
     try {
-      await updateSettings({ deepseek_api_key: deepseekApiKey.value, language: language.value })
+      await updateSettings({
+        deepseek_api_key: deepseekApiKey.value,
+        language: language.value,
+        dj_voice: djVoice.value,
+        auto_greet: autoGreet.value,
+        persona: persona.value,
+      })
     } catch { /* 后端不可用时忽略 */ }
   }
 
-  // 自动持久化
-  watch([theme, alwaysOnTop, autoplayOnLaunch, showDJEmotion, language, deepseekApiKey], () => persistToStorage())
+  watch([theme, alwaysOnTop, language, deepseekApiKey, djVoice, autoGreet, persona], () => persistToStorage())
 
-  // 启动时加载
   loadFromStorage()
 
   return {
-    theme, alwaysOnTop, autoplayOnLaunch, showDJEmotion, language, deepseekApiKey,
+    theme, alwaysOnTop, language, deepseekApiKey, djVoice, autoGreet, persona,
     isDark,
     syncAlwaysOnTop, syncToBackend, loadFromStorage,
     setTheme: (m: ThemeMode) => { theme.value = m },

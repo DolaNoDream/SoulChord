@@ -189,12 +189,30 @@ async function handleImport() {
           <el-switch v-model="settingsStore.alwaysOnTop" @change="settingsStore.syncAlwaysOnTop()" size="small" />
         </div>
         <div class="settings-drawer__item">
-          <div class="settings-drawer__item-info"><span>▶️ 启动时自动播放</span></div>
-          <el-switch v-model="settingsStore.autoplayOnLaunch" size="small" />
+          <div class="settings-drawer__item-info">
+            <span>🎙️ DJ 音色</span>
+            <span class="settings-drawer__item-desc">选择 AI DJ 的语音风格</span>
+          </div>
+          <select v-model="settingsStore.djVoice" @change="settingsStore.syncToBackend()" class="settings-drawer__select">
+            <option value="male_gentle">温柔男声</option>
+            <option value="female_warm">温暖女声</option>
+            <option value="male_lively">活泼男声</option>
+          </select>
         </div>
         <div class="settings-drawer__item">
-          <div class="settings-drawer__item-info"><span>😊 显示 AI DJ 情绪</span></div>
-          <el-switch v-model="settingsStore.showDJEmotion" size="small" />
+          <div class="settings-drawer__item-info"><span>👋 主动问候</span><span class="settings-drawer__item-desc">长时间静默后 AI DJ 主动打招呼</span></div>
+          <el-switch v-model="settingsStore.autoGreet" @change="settingsStore.syncToBackend()" size="small" />
+        </div>
+        <div class="settings-drawer__item">
+          <div class="settings-drawer__item-info">
+            <span>🎭 DJ 人格</span>
+            <span class="settings-drawer__item-desc">切换 AI DJ 的对话风格</span>
+          </div>
+          <select v-model="settingsStore.persona" @change="settingsStore.syncToBackend()" class="settings-drawer__select">
+            <option value="night_dj">深夜主播（温柔不打扰）</option>
+            <option value="warm_companion">温暖陪伴（关怀型）</option>
+            <option value="energetic_jockey">动感节奏（鼓励型）</option>
+          </select>
         </div>
       </div>
 
@@ -297,6 +315,7 @@ async function handleImport() {
   &__apikey-input { flex: 1; padding: 7px 10px; background: $bg-tertiary; border: 1px solid $border-subtle; border-radius: $radius-sm; color: $text-primary; font-size: $font-size-xs; font-family: 'Consolas', monospace; outline: none; &::placeholder { color: $text-muted; } &:focus { border-color: $accent-primary; } }
   &__apikey-toggle { width: 32px; height: 32px; display: flex; align-items: center; justify-content: center; background: $bg-glass; border: 1px solid $border-subtle; border-radius: $radius-sm; cursor: pointer; font-size: 14px; flex-shrink: 0; &:hover { border-color: $border-default; } }
   &__apikey-link { color: var(--accent-primary); font-size: 11px; text-decoration: none; &:hover { text-decoration: underline; } }
+  &__select { padding: 4px 8px; background: $bg-tertiary; border: 1px solid $border-subtle; border-radius: 4px; color: $text-primary; font-size: 11px; outline: none; cursor: pointer; &:focus { border-color: $accent-primary; } }
 }
 .drawer-fade-enter-active, .drawer-fade-leave-active { transition: opacity 0.25s ease; }
 .drawer-fade-enter-from, .drawer-fade-leave-to { opacity: 0; }
