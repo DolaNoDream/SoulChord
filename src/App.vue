@@ -14,11 +14,15 @@ const { minimize, maximize, close, isMaximized, isElectron: isInElectron } = use
 const showDrawer = ref(false)
 const showHistory = ref(false)
 
-// 启动：连接后端 → 加载用户画像
+// 启动：连接后端 → 加载用户画像 + 拉取后端设置
 onMounted(async () => {
   try {
-    await fetchInit()
+    const initData = await fetchInit()
     await userStore.loadInit()
+    // 从后端 settings 恢复设置（优先级高于 localStorage）
+    if (initData.settings) {
+      settingsStore.loadFromBackend(initData.settings as Record<string, unknown>)
+    }
     console.log('[SoulChord] 后端已连接，persona:', userStore.agentInfo?.persona)
     settingsStore.syncToBackend()
   } catch {

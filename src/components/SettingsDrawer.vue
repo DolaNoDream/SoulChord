@@ -2,7 +2,7 @@
 import { ref, watch, computed } from 'vue'
 import { useUserStore } from '@/stores/user'
 import { useSettingsStore } from '@/stores/settings'
-import { updateMemory, deleteMemory } from '@/api/agent'
+import { updateMemory, deleteMemory, getSettings } from '@/api/agent'
 import type { Memory } from '@/types/user'
 const props = defineProps<{ visible: boolean }>()
 const emit = defineEmits<{ close: [] }>()
@@ -102,7 +102,16 @@ function confidenceDot(confidence: number): string {
   return '🔴'
 }
 
-watch(() => props.visible, (v) => { if (v) userStore.loadMemories() })
+watch(() => props.visible, async (v) => {
+  if (v) {
+    userStore.loadMemories()
+    // 每次打开设置面板时从后端拉取最新设置
+    try {
+      const settings = await getSettings()
+      if (settings) settingsStore.loadFromBackend(settings as Record<string, unknown>)
+    } catch { /* 后端离线时用本地数据 */ }
+  }
+})
 
 function handleAvatarClick() { avatarInputRef.value?.click() }
 function handleAvatarChange(e: Event) {
@@ -212,6 +221,16 @@ async function handleImport() {
             <option value="night_dj">深夜主播（温柔不打扰）</option>
             <option value="warm_companion">温暖陪伴（关怀型）</option>
             <option value="energetic_jockey">动感节奏（鼓励型）</option>
+          </select>
+        </div>
+        <div class="settings-drawer__item">
+          <div class="settings-drawer__item-info">
+            <span>🌐 语言</span>
+            <span class="settings-drawer__item-desc">切换界面显示语言</span>
+          </div>
+          <select v-model="settingsStore.language" @change="settingsStore.syncToBackend()" class="settings-drawer__select">
+            <option value="zh-CN">中文</option>
+            <option value="en-US">English</option>
           </select>
         </div>
       </div>

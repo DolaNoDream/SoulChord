@@ -17,6 +17,15 @@ export const useSettingsStore = defineStore('settings', () => {
 
   const isDark = computed(() => theme.value === 'dark')
 
+  /** 从后端 GET /api/init 的 settings 字段加载（优先级高于 localStorage） */
+  function loadFromBackend(backendSettings: Record<string, unknown>) {
+    if (backendSettings.dj_voice) djVoice.value = backendSettings.dj_voice as typeof djVoice.value
+    if (typeof backendSettings.auto_greet === 'boolean') autoGreet.value = backendSettings.auto_greet
+    if (backendSettings.persona) persona.value = backendSettings.persona as typeof persona.value
+    if (backendSettings.language) language.value = backendSettings.language as typeof language.value
+    persistToStorage() // 同步到本地
+  }
+
   function loadFromStorage() {
     try {
       const stored = localStorage.getItem('soulchord-settings')
@@ -59,7 +68,7 @@ export const useSettingsStore = defineStore('settings', () => {
   return {
     theme, alwaysOnTop, language, deepseekApiKey, djVoice, autoGreet, persona,
     isDark,
-    syncAlwaysOnTop, syncToBackend, loadFromStorage,
+    syncAlwaysOnTop, syncToBackend, loadFromStorage, loadFromBackend,
     setTheme: (m: ThemeMode) => { theme.value = m },
   }
 })
