@@ -35,9 +35,12 @@ export const useSettingsStore = defineStore('settings', () => {
   }
 
   /** 切换始终置顶 */
-  function toggleAlwaysOnTop() {
-    alwaysOnTop.value = !alwaysOnTop.value
-    window.electronAPI?.setAlwaysOnTop(alwaysOnTop.value)
+  /** 同步置顶状态到 Electron 窗口（v-model 已更新值，这里只通知 Electron） */
+  function syncAlwaysOnTop() {
+    console.log('[Settings] syncAlwaysOnTop:', alwaysOnTop.value, 'has API:', !!window.electronAPI)
+    if (window.electronAPI) {
+      window.electronAPI.setAlwaysOnTop(alwaysOnTop.value)
+    }
   }
 
   /** 切换主题 */
@@ -109,7 +112,7 @@ export const useSettingsStore = defineStore('settings', () => {
     isMiniMode,
     // actions
     toggleMiniMode,
-    toggleAlwaysOnTop,
+    toggleAlwaysOnTop: syncAlwaysOnTop,
     setTheme,
     resetToDefaults,
     loadFromStorage,

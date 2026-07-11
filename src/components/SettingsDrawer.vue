@@ -233,7 +233,7 @@ async function handleImport() {
             <span>🔝 窗口始终置顶</span>
             <span class="settings-drawer__item-desc">桌面模式下窗口保持在其他应用之上</span>
           </div>
-          <el-switch v-model="settingsStore.alwaysOnTop" @change="settingsStore.toggleAlwaysOnTop" size="small" />
+          <el-switch v-model="settingsStore.alwaysOnTop" @change="settingsStore.toggleAlwaysOnTop()" size="small" />
         </div>
 
         <div class="settings-drawer__item">
