@@ -6,11 +6,13 @@ import { useElectron } from '@/composables/useElectron'
 import { fetchInit } from '@/api/agent'
 import MiniWindow from '@/components/MiniWindow.vue'
 import SettingsDrawer from '@/components/SettingsDrawer.vue'
+import HistoryPanel from '@/components/HistoryPanel.vue'
 
 const settingsStore = useSettingsStore()
 const userStore = useUserStore()
 const { minimize, maximize, close, isMaximized, isElectron: isInElectron } = useElectron()
 const showDrawer = ref(false)
+const showHistory = ref(false)
 
 // 启动：连接后端 → 加载用户画像
 onMounted(async () => {
@@ -30,6 +32,9 @@ onMounted(async () => {
 
   <div v-else class="app">
     <header v-if="isInElectron" class="app__titlebar drag-region">
+      <button class="app__history-btn no-drag" @click="showHistory = !showHistory" title="播放记录">
+        {{ showHistory ? '📜' : '📋' }}
+      </button>
       <div class="app__titlebar-title">SoulChord</div>
       <div class="app__titlebar-controls no-drag">
         <button class="app__titlebar-btn" title="最小化" @click="minimize">─</button>
@@ -55,6 +60,7 @@ onMounted(async () => {
     </button>
 
     <SettingsDrawer :visible="showDrawer" @close="showDrawer = false" />
+    <HistoryPanel :visible="showHistory" @close="showHistory = false" />
   </div>
 </template>
 
