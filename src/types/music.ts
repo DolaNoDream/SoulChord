@@ -19,7 +19,7 @@ export interface Song {
   artists: Artist[]          // 艺人列表（多人合作时有多个）
   album: Album               // 所属专辑
   duration_ms: number        // 时长（毫秒）
-  fee: number                // 0=免费 1=VIP 4=数字专辑 8=低质免费
+  fee?: number               // 0=免费 1=VIP 4=数字专辑 8=低质免费（后端可能不返回）
   cover_url?: string         // 专辑封面 URL
 }
 
@@ -30,6 +30,7 @@ export interface Playlist {
   source_url: string         // 原始网易云分享链接
   song_count: number         // 歌单歌曲总数
   created_at: number         // 导入时间戳
+  songs?: Song[]             // 歌曲列表（GET /api/playlist/{id} 返回）
 }
 
 /** 歌曲反馈（对齐文档 4.4 SongFeedback 结构） */

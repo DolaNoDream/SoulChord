@@ -23,8 +23,7 @@ const showNeteaseKey = ref(false)
 
 // ===== 网易云登录 =====
 const loginDialogVisible = ref(false)
-const loginType = ref<'qr' | 'sms'>('qr')
-const loginToken = ref('')
+const loginCredential = ref('')
 const isLoggingIn = ref(false)
 
 // 打开设置面板时从后端拉取最新设置
@@ -81,19 +80,15 @@ function openDeepSeekPage() {
 
 // ===== 网易云登录 =====
 function openLoginDialog() {
-  loginToken.value = ''
-  loginType.value = 'qr'
+  loginCredential.value = ''
   loginDialogVisible.value = true
 }
 
 async function handleLogin() {
-  if (!loginToken.value.trim()) return
+  if (!loginCredential.value.trim()) return
   isLoggingIn.value = true
   try {
-    const result = await postNeteaseLogin({
-      type: loginType.value,
-      token: loginToken.value.trim(),
-    })
+    const result = await postNeteaseLogin(loginCredential.value.trim())
     settingsStore.setNeteaseStatus(result.login_status, result.nickname)
     loginDialogVisible.value = false
     ElMessage.success(`已登录：${result.nickname}`)
@@ -204,14 +199,10 @@ async function handleLogin() {
         <div class="import-dialog">
           <h4>网易云账号登录</h4>
           <p class="import-dialog__hint">输入扫码获取的临时Token或验证码完成授权登录</p>
-          <div class="settings-drawer__login-type">
-            <label><input type="radio" v-model="loginType" value="qr" /> 扫码登录</label>
-            <label><input type="radio" v-model="loginType" value="sms" /> 验证码登录</label>
-          </div>
-          <input v-model="loginToken" class="settings-drawer__apikey-input" :placeholder="loginType === 'qr' ? '请输入扫码Token' : '请输入手机验证码'" style="width: 100%; margin-top: 8px;" />
+          <input v-model="loginCredential" class="settings-drawer__apikey-input" placeholder="请输入登录凭证（扫码Token / 验证码）" style="width: 100%; margin-top: 8px;" />
           <div class="import-dialog__actions">
             <button class="import-dialog__btn import-dialog__btn--cancel" @click="loginDialogVisible = false">取消</button>
-            <button class="import-dialog__btn import-dialog__btn--confirm" :disabled="!loginToken.trim() || isLoggingIn" @click="handleLogin">{{ isLoggingIn ? '登录中...' : '登录' }}</button>
+            <button class="import-dialog__btn import-dialog__btn--confirm" :disabled="!loginCredential.trim() || isLoggingIn" @click="handleLogin">{{ isLoggingIn ? '登录中...' : '登录' }}</button>
           </div>
         </div>
       </div>

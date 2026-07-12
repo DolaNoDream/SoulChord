@@ -1,12 +1,11 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import type { UserProfits, AgentInfo } from '@/types/user'
-import { fetchInit, getUserProfile, updateUserBaseInfo, triggerAnalyze } from '@/api/agent'
+import type { UserProfits } from '@/types/user'
+import { getUserProfile, updateUserBaseInfo, triggerAnalyze } from '@/api/agent'
 
 export const useUserStore = defineStore('user', () => {
   // ========== 状态 ==========
   const profile = ref<UserProfits | null>(null)
-  const agentInfo = ref<AgentInfo | null>(null)
   const isProfileLoaded = ref(false)
   const isAnalyzing = ref(false)
 
@@ -17,21 +16,6 @@ export const useUserStore = defineStore('user', () => {
   const avatarUrl = computed(() => profile.value?.avatar_url ?? '')
 
   // ========== 方法 ==========
-
-  /** 启动时调用：拉取 init 数据 */
-  async function loadInit(): Promise<void> {
-    isAnalyzing.value = true
-    try {
-      const data = await fetchInit()
-      profile.value = data.user_profile
-      agentInfo.value = data.agent
-      isProfileLoaded.value = true
-    } catch {
-      // 后端不可用，静默失败
-    } finally {
-      isAnalyzing.value = false
-    }
-  }
 
   /** 加载用户完整画像（GET /api/user/profile） */
   async function loadProfile(): Promise<void> {
@@ -101,9 +85,9 @@ export const useUserStore = defineStore('user', () => {
   }
 
   return {
-    profile, agentInfo, isProfileLoaded, isAnalyzing,
+    profile, isProfileLoaded, isAnalyzing,
     topGenres, topArtists, nickname, avatarUrl,
-    loadInit, loadProfile, requestAnalyze, updateBaseInfo,
+    loadProfile, requestAnalyze, updateBaseInfo,
     updateNickname, updateAvatar, getLocalAvatar, getLocalNickname,
   }
 })

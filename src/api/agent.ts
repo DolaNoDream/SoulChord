@@ -4,7 +4,7 @@
  */
 import axios, { type AxiosInstance } from 'axios'
 import type { Song, Playlist } from '@/types/music'
-import type { UserProfits, RecentMood, AgentInfo } from '@/types/user'
+import type { UserProfits } from '@/types/user'
 
 /** Agent 基础地址 */
 const AGENT_BASE_URL = 'http://localhost:8000'
@@ -55,18 +55,17 @@ http.interceptors.response.use(
 
 /** 启动初始化：拉取全量基础数据 */
 export async function fetchInit(): Promise<{
-  agent: AgentInfo
   user_profile: UserProfits
-  recent_moods: RecentMood[]
-  current_state: {
-    is_playing: boolean
-    current_song: Song | null
-    scene: string
-    active_expression: string
-  }
   playlists: Playlist[]
   netease_status: { login_status: boolean; nickname: string }
   settings: Record<string, unknown>
+  player_state: {
+    current_song: Song | null
+    play_url: string | null
+    is_playing: boolean
+    playlist: Song[]
+    current_index: number
+  }
 }> {
   const res = await http.get('/init')
   return res.data
@@ -91,11 +90,10 @@ export async function updateSettings(data: {
 // ---- 1.3 网易云账号登录 ----
 
 /** 传入登录凭证完成网易云账号授权登录 */
-export async function postNeteaseLogin(credential: {
-  type: 'qr' | 'sms'
-  token: string
-}): Promise<{ login_status: boolean; nickname: string }> {
-  const res = await http.post('/netease/login', credential)
+export async function postNeteaseLogin(credential: string): Promise<{
+  login_status: boolean; nickname: string
+}> {
+  const res = await http.post('/netease/login', { credential })
   return res.data
 }
 
@@ -119,11 +117,8 @@ export async function getPlaylists(): Promise<Playlist[]> {
   return res.data
 }
 
-/** 查询单个歌单内所有歌曲详情 */
-export async function getPlaylistDetail(playlistId: string): Promise<{
-  playlist: Playlist
-  songs: Song[]
-}> {
+/** 查询单个歌单内所有歌曲详情（后端 Playlist 直接含 songs） */
+export async function getPlaylistDetail(playlistId: string): Promise<Playlist> {
   const res = await http.get(`/playlist/${playlistId}`)
   return res.data
 }
@@ -131,7 +126,7 @@ export async function getPlaylistDetail(playlistId: string): Promise<{
 /** 修改歌单基础信息（歌单名称、备注） */
 export async function updatePlaylist(playlistId: string, data: {
   name?: string
-  note?: string
+  remark?: string
 }): Promise<void> {
   await http.put(`/playlist/${playlistId}`, data)
 }

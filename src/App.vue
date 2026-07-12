@@ -3,6 +3,7 @@ import { ref, onMounted, provide, readonly } from 'vue'
 import { useSettingsStore } from '@/stores/settings'
 import { useUserStore } from '@/stores/user'
 import { usePlaylistStore } from '@/stores/playlist'
+import { usePlayerStore } from '@/stores/player'
 import { useElectron } from '@/composables/useElectron'
 import { fetchInit } from '@/api/agent'
 import MiniWindow from '@/components/MiniWindow.vue'
@@ -12,6 +13,7 @@ import HistoryPanel from '@/components/HistoryPanel.vue'
 const settingsStore = useSettingsStore()
 const userStore = useUserStore()
 const playlistStore = usePlaylistStore()
+const playerStore = usePlayerStore()
 const { minimize, maximize, close, isMaximized, isElectron: isInElectron } = useElectron()
 const showDrawer = ref(false)
 const showHistory = ref(false)
@@ -22,9 +24,8 @@ provide('initDone', readonly(initDone))
 onMounted(async () => {
   try {
     const initData = await fetchInit()
-    // 直接设置数据（避免 userStore.loadInit 再次调 fetchInit）
+    // 直接设置数据
     if (initData.user_profile) userStore.profile = initData.user_profile
-    if (initData.agent) userStore.agentInfo = initData.agent
     userStore.isProfileLoaded = true
     // 从后端 settings 恢复设置
     if (initData.settings) {
@@ -41,7 +42,20 @@ onMounted(async () => {
     if (initData.playlists) {
       playlistStore.setFromInit(initData.playlists)
     }
-    console.log('[SoulChord] 后端已连接，persona:', userStore.agentInfo?.persona)
+    // 恢复播放器状态
+    if (initData.player_state) {
+      playerStore.queue = initData.player_state.playlist || []
+      if (initData.player_state.current_song) {
+        playerStore.playSong(
+          initData.player_state.current_song,
+          initData.player_state.play_url || ''
+        )
+        if (!initData.player_state.is_playing) {
+          playerStore.togglePlay()
+        }
+      }
+    }
+    console.log('[SoulChord] 后端已连接')
     settingsStore.syncToBackend()
     initDone.value = true  // 通知 DashboardView 可以建立 WS 连接
   } catch {

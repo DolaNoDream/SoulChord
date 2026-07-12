@@ -23,14 +23,3 @@ export interface UserProfile {
   created_at: number
 }
 
-/** 最近情绪记录 */
-export interface RecentMood {
-  mood: string
-  ts: number
-}
-
-/** Agent 信息 */
-export interface AgentInfo {
-  version: string
-  persona: string
-}

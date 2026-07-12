@@ -60,8 +60,8 @@ export const usePlaylistStore = defineStore('playlist', () => {
     isLoading.value = true
     try {
       const detail = await getPlaylistDetail(playlistId)
-      selectedPlaylist.value = detail.playlist
-      selectedSongs.value = detail.songs
+      selectedPlaylist.value = detail
+      selectedSongs.value = detail.songs || []
     } catch {
       errorMsg.value = '加载歌单详情失败'
     } finally {
