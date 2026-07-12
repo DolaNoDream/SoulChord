@@ -1,0 +1,26 @@
+
+services:
+  # 1. 底层网易云 Node.js 服务 (直接使用开源镜像)
+  netease-api:
+    image: binaryify/netease_cloud_music_api:latest
+    container_name: netease_music_api
+    ports:
+      - "3000:3000"
+    restart: always
+
+  # 2. 你编写的 Python 音乐 API 代理服务
+  music-agent-api:
+    build: .
+    container_name: music_agent_api
+    ports:
+      - "8081:8001"
+    environment:
+      # 在容器网络中，直接使用服务名 netease-api 互相访问
+      - NETEASE_API_URL=http://netease-api:3000
+      - FEISHU_APP_ID=cli_aad84e3497335cc8
+      - FEISHU_APP_SECRET=k7v1McZFJxs9OcYtHyEeHbKI827dSZjP
+
+      - NO_PROXY=localhost,127.0.0.1,netease-api,open.feishu.cn
+    depends_on:
+      - netease-api
+    restart: always
