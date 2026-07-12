@@ -141,3 +141,37 @@ dist
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
 .vite/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# pip
+pip-log.txt
+pip-delete-this-directory.txt
+
+# virtualenv
+.venv/
+.conda/
+
+# Python debug
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# SoulChord backend data
+backend/data/
+backend/.env
+backend/.env.*
+!.env.example
+
+backend/test_data/
