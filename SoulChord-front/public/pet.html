@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>桌宠</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        html, body {
+            width: 200px; height: 200px;
+            background: transparent !important;
+            overflow: hidden;
+            user-select: none; -webkit-user-select: none;
+            cursor: default;
+        }
+        canvas {
+            display: block;
+            width: 200px; height: 200px;
+            background: transparent;
+        }
+        #bubble {
+            position: absolute;
+            background: rgba(255,255,255,0.92);
+            border-radius: 16px;
+            padding: 10px 16px;
+            max-width: 220px;
+            font-size: 15px; color: #333;
+            font-family: "PingFang SC","Microsoft YaHei",sans-serif;
+            box-shadow: 0 4px 14px rgba(0,0,0,0.15);
+            pointer-events: none;
+            opacity: 0; transition: opacity 0.3s;
+            left: 50%; top: -12px;
+            transform: translate(-50%,-100%);
+            z-index: 10;
+            white-space: normal; word-break: break-word; line-height: 1.5;
+        }
+        #bubble::after {
+            content: '';
+            position: absolute; bottom: -10px; left: 50%;
+            transform: translateX(-50%);
+            border: 8px solid transparent;
+            border-top-color: rgba(255,255,255,0.92);
+        }
+    </style>
+</head>
+<body>
+<canvas id="petCanvas"></canvas>
+<div id="bubble"></div>
+
+<script>
+(function() {
+    const WIN_W = 200, WIN_H = 200;
+
+    // 素材路径（相对于 public/ 目录）
+    const DAY_SPRITES = {
+        idle:    ['assets/day/idle_1.png','assets/day/idle_2.png','assets/day/idle_3.png','assets/day/idle_4.png','assets/day/idle_5.png'],
+        idle10s: ['assets/day/idle10s_1.png','assets/day/idle10s_2.png'],
+        idle20s: ['assets/day/idle20s_1.png','assets/day/idle20s_2.png'],
+        click:   ['assets/day/click.png'],
+        drag:    ['assets/day/drag.png']
+    };
+    const NIGHT_SPRITES = {
+        idle:    ['assets/night/idle_1.png','assets/night/idle_2.png','assets/night/idle_3.png','assets/night/idle_4.png','assets/night/idle_5.png'],
+        idle10s: ['assets/night/idle10s_1.png','assets/night/idle10s_2.png'],
+        idle20s: ['assets/night/idle20s_1.png','assets/night/idle20s_2.png'],
+        click:   ['assets/night/click.png'],
+        drag:    ['assets/night/drag.png']
+    };
+
+    const IDLE_FRAME_SPEED = 30;
+    const CLICK_DISPLAY_MS = 500;
+    const TIME_TO_IDLE_10S = 10000;
+    const TIME_TO_IDLE_20S = 20000;
+
+    const canvas = document.getElementById('petCanvas');
+    const ctx = canvas.getContext('2d');
+    const bubble = document.getElementById('bubble');
+
+    let currentTheme = 'day';
+    let petState = 'idle';
+    let animFrame = 0, animTimer = 0;
+    let isDragging = false;
+
+    let winX = 800, winY = 400;
+    let dragStartMouseX = 0, dragStartMouseY = 0, dragStartWinX = 0, dragStartWinY = 0;
+
+    let lastInteractionTime = performance.now();
+    let clickStartTime = 0;
+    let bubbleTimer = 0;
+
+    // 图片加载
+    const images = {};
+    function loadSprites(theme, cfg) {
+        for (let [state, paths] of Object.entries(cfg))
+            paths.forEach((p, i) => { images[`${theme}_${state}_${i}`] = new Image(); images[`${theme}_${state}_${i}`].src = p; });
+    }
+    loadSprites('day', DAY_SPRITES);
+    loadSprites('night', NIGHT_SPRITES);
+
+    function getCfg() { return currentTheme === 'day' ? DAY_SPRITES : NIGHT_SPRITES; }
+    function getImage() {
+        let paths;
+        if (petState === 'idle') paths = getCfg().idle;
+        else if (petState === 'idle10s') paths = getCfg().idle10s;
+        else if (petState === 'idle20s') paths = getCfg().idle20s;
+        else if (petState === 'click') paths = getCfg().click;
+        else if (petState === 'drag') paths = getCfg().drag;
+        else paths = getCfg().idle;
+        let i = Math.min(animFrame, paths.length - 1);
+        return images[`${currentTheme}_${petState}_${i}`] || null;
+    }
+
+    // 动画
+    function updateAnimation(now) {
+        let sprites = getCfg();
+        if (petState === 'idle' || petState === 'idle10s' || petState === 'idle20s') {
+            let elapsed = now - lastInteractionTime;
+            if (elapsed >= TIME_TO_IDLE_20S) {
+                if (petState !== 'idle20s') { petState = 'idle20s'; animFrame = 0; animTimer = 0; }
+            } else if (elapsed >= TIME_TO_IDLE_10S) {
+                if (petState !== 'idle10s') { petState = 'idle10s'; animFrame = 0; animTimer = 0; }
+            } else {
+                if (petState !== 'idle') { petState = 'idle'; animFrame = 0; animTimer = 0; }
+            }
+            let paths = sprites[petState] || sprites.idle;
+            animTimer++;
+            if (animTimer >= IDLE_FRAME_SPEED) { animTimer = 0; animFrame = (animFrame + 1) % paths.length; }
+        } else if (petState === 'click') {
+            if (now - clickStartTime >= CLICK_DISPLAY_MS) {
+                petState = 'idle'; animFrame = 0; animTimer = 0; lastInteractionTime = now;
+            }
+        }
+    }
+
+    // 绘制
+    function draw() {
+        canvas.width = WIN_W; canvas.height = WIN_H;
+        ctx.clearRect(0, 0, WIN_W, WIN_H);
+        let img = getImage();
+        if (img && img.complete && img.naturalWidth > 0) {
+            let s = Math.min(WIN_W / img.naturalWidth, WIN_H / img.naturalHeight);
+            ctx.drawImage(img, (WIN_W - img.naturalWidth * s) / 2, (WIN_H - img.naturalHeight * s) / 2, img.naturalWidth * s, img.naturalHeight * s);
+        }
+    }
+
+    // 气泡
+    function showBubble(text, durationMs = 2500) { bubble.textContent = text; bubble.style.opacity = '1'; bubbleTimer = durationMs; }
+    function hideBubble() { bubble.style.opacity = '0'; bubbleTimer = 0; }
+
+    // 主题
+    function autoTheme() { let h = new Date().getHours(); currentTheme = (h >= 18 || h < 6) ? 'night' : 'day'; }
+    autoTheme();
+    setInterval(autoTheme, 60000);
+
+    // ========== 交互逻辑 ==========
+    const api = window.electronAPI || {};
+
+    function startDrag(sX, sY) {
+        isDragging = true;
+        dragStartMouseX = sX; dragStartMouseY = sY;
+        dragStartWinX = winX; dragStartWinY = winY;
+        petState = 'drag'; animFrame = 0;
+        hideBubble();
+        lastInteractionTime = performance.now();
+        // 隐藏主窗口
+        if (api.hideMainWindow) api.hideMainWindow();
+    }
+
+    function moveDrag(sX, sY) {
+        if (!isDragging) return;
+        let dx = sX - dragStartMouseX, dy = sY - dragStartMouseY;
+        winX = dragStartWinX + dx; winY = dragStartWinY + dy;
+        if (api.movePetWindow) api.movePetWindow(winX, winY);
+    }
+
+    function endDrag() {
+        if (!isDragging) return;
+        isDragging = false;
+        petState = 'click'; animFrame = 0;
+        clickStartTime = performance.now();
+        lastInteractionTime = performance.now();
+    }
+
+    // 鼠标事件
+    canvas.addEventListener('mousedown', e => startDrag(e.screenX, e.screenY));
+    window.addEventListener('mousemove', e => moveDrag(e.screenX, e.screenY));
+    window.addEventListener('mouseup', () => endDrag());
+
+    // 触摸事件
+    canvas.addEventListener('touchstart', e => {
+        e.preventDefault();
+        let t = e.touches[0];
+        startDrag(t.screenX, t.screenY);
+    });
+    window.addEventListener('touchmove', e => {
+        e.preventDefault();
+        if (isDragging) { let t = e.touches[0]; moveDrag(t.screenX, t.screenY); }
+    });
+    window.addEventListener('touchend', e => { e.preventDefault(); endDrag(); });
+
+    // 单击主窗口
+    canvas.addEventListener('click', e => {
+        if (!isDragging) {
+            if (api.showMainWindow) api.showMainWindow();
+        }
+    });
+
+    // ========== 主循环 ==========
+    let lt = performance.now();
+    function loop(now) {
+        let dt = now - lt; lt = now;
+        updateAnimation(now);
+        if (bubbleTimer > 0) { bubbleTimer -= dt; if (bubbleTimer <= 0) hideBubble(); }
+        draw();
+        requestAnimationFrame(loop);
+    }
+    requestAnimationFrame(loop);
+
+    // 暴露外部 API
+    window.petAPI = {
+        showMessage: (t,d) => showBubble(t,d),
+        switchToDay: () => currentTheme = 'day',
+        switchToNight: () => currentTheme = 'night'
+    };
+})();
+</script>
+</body>
+</html>
