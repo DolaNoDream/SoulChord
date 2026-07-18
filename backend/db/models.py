@@ -34,6 +34,7 @@ class UserProfits(BaseModel):
     nickname: str = "用户"
     avatar_url: Optional[str] = None
     favorite_genres: List[str] = []
+    disliked_genres: List[str] = []
     favorite_artists: List[str] = []
     music_preference_desc: str = ""
     AI_conclustion: str = ""

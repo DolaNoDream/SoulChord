@@ -21,6 +21,7 @@ user_profile_store = JSONStore(os.path.join(DATA_DIR, "user_profile.json"), {
     "nickname": "用户",
     "avatar_url": None,
     "favorite_genres": [],
+    "disliked_genres": [],
     "favorite_artists": [],
     "music_preference_desc": "",
     "AI_conclustion": "",

@@ -12,6 +12,36 @@ class UpdateUserBaseInfoRequest(BaseModel):
     avatar_url: Optional[str] = None
 
 
+class FeedbackRequest(BaseModel):
+    song_id: str
+    action: str
+    ts: int
+
+
+@router.post("/api/feedback")
+async def feedback(request: FeedbackRequest):
+    valid_actions = ["like", "dislike", "favorite", "skip"]
+    if request.action not in valid_actions:
+        return {"code": 1001, "msg": "参数错误", "data": None}
+
+    if request.action == "dislike":
+        user_profile = user_profile_store.read()
+        disliked_genres = user_profile.get("disliked_genres", [])
+
+        for playlist in playlist_store.list():
+            songs = playlist.get("songs", [])
+            for song in songs:
+                if song.get("id") == request.song_id:
+                    album = song.get("album", {})
+                    genre = album.get("name", "")
+                    if genre and genre not in disliked_genres:
+                        disliked_genres.append(genre)
+                        user_profile_store.update({"disliked_genres": disliked_genres})
+                    break
+
+    return {"code": 0, "msg": "ok", "data": None}
+
+
 @router.post("/api/user/analyze")
 async def analyze_user():
     playlists = playlist_store.list()
