@@ -56,6 +56,9 @@ SoulChord-deskpet-skin/main.js
 SoulChord-deskpet-skin/npm
 SoulChord-deskpet-skin/preload.js
 
+# === 运行时日志 ===
+runtime*.log
+
 # === 杂项 ===
 main.py
 NEXT_SESSION_PROMPT.md

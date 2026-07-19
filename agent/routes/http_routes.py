@@ -217,6 +217,27 @@ def register_http_routes(app: FastAPI):
     async def playlist_list():
         return ok({"playlists": playlist_store.list_all()})
 
+    @app.get("/api/playlist/current")
+    async def playlist_current():
+        """返回当前播放列表：已播（去重）/ 正在播放 / 接下来。"""
+        mirror = player_state.load_player_mirror()
+        current_song = mirror.get("current_song") if mirror else None
+        queue = mirror.get("playlist_queue", []) if mirror else []
+        history = player_state.load_history(limit=100, offset=0)
+        items = history.get("items", []) if isinstance(history, dict) else []
+        seen: set = set()
+        played: list = []
+        for item in items:
+            sid = item.get("song_id", "")
+            if sid and sid not in seen:
+                seen.add(sid)
+                played.append(item)
+        return ok({
+            "current_song": current_song,
+            "queue": queue,
+            "played": played[:30],
+        })
+
     @app.get("/api/playlist/{playlist_id}")
     async def playlist_get(playlist_id: str):
         pl = playlist_store.get(playlist_id)

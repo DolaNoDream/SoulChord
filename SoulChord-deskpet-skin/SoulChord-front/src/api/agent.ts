@@ -210,6 +210,16 @@ export async function fetchSongHistory(limit = 50, offset = 0): Promise<{
   return res.data
 }
 
+/** 查询当前播放列表（已播/正在/接下来） */
+export async function fetchCurrentPlaylist(): Promise<{
+  current_song: any
+  queue: any[]
+  played: any[]
+}> {
+  const res = await http.get('/playlist/current')
+  return res.data
+}
+
 // ===== WebSocket 连接 =====
 
 /** 创建 WebSocket 连接 */

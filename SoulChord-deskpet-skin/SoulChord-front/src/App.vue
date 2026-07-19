@@ -61,7 +61,7 @@ onMounted(async () => {
 
   <div v-else class="app">
     <header class="app__titlebar" :class="{ 'drag-region': isInElectron }">
-      <button class="app__history-btn no-drag" @click="showHistory = !showHistory" title="播放记录">
+      <button class="app__history-btn no-drag" @click="showHistory = !showHistory" title="播放列表">
         {{ showHistory ? '📜' : '📋' }}
       </button>
       <div class="app__titlebar-title">SoulChord</div>

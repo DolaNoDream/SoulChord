@@ -45,7 +45,7 @@ async def action_planner_node(state: dict) -> dict:
         subtype = (state.get("trigger_event") or {}).get("subtype", "")
         if subtype == PlayerEventSubtype.SONG_FINISHED.value:
             return await _handle_song_finished(state)
-        if subtype in ("play_end", "user_skip"):
+        if subtype in ("play_end", "user_skip", "skip"):
             # feedback_extractor 已先于 action_planner 执行（graph 边保证），
             # feedback 已记录，此处只需处理换歌逻辑
             return await _handle_song_finished(state)
@@ -123,19 +123,30 @@ async def _handle_init_plan(state: dict, init_plan: dict) -> dict:
         })
 
     # ★ 初始播放列表剩余歌曲存入 queue（第一首歌之后的所有歌曲）
+    #   过滤虚假 song_id + 补满至少 5 首可播歌曲
     if initial_playlist and first_song:
+        first_sid = first_song.get("song_id") or first_song.get("id", "")
         remaining_raw = [s for i, s in enumerate(initial_playlist) if i != first_idx]
-        if remaining_raw:
-            remaining = _to_queue_songs(remaining_raw)
-            rds = state.get("dependencies", {}).get("runtime_dj_state")
-            if rds:
-                rds["playlist_queue"] = remaining
-                state_manager.player.update_player_event({
-                    "subtype": "playlist_changed",
-                    "playlist": remaining,
-                    "strategy": {"source": "init_plan"},
-                })
-                logger.info("Stored %d songs in playlist_queue from init_plan", len(remaining))
+
+        # 过滤：只保留真实 song_id 的歌曲
+        valid_remaining = [s for s in remaining_raw if not _is_fake_song_id(s.get("song_id") or s.get("id", ""))]
+        logger.info("init_plan: %d/%d remaining songs have valid song_id", len(valid_remaining), len(remaining_raw))
+
+        # 用 _REAL_FALLBACK_SONGS 补满至少 5 首（跳过与第一首重复的）
+        fallback_pool = [s for s in _REAL_FALLBACK_SONGS if s["song_id"] != first_sid]
+        padded = valid_remaining + fallback_pool
+        final_queue = _to_queue_songs(padded[:max(5, len(valid_remaining))])
+
+        rds = state.get("dependencies", {}).get("runtime_dj_state")
+        if rds:
+            rds["playlist_queue"] = final_queue
+            state_manager.player.update_player_event({
+                "subtype": "playlist_changed",
+                "playlist": final_queue,
+                "strategy": {"source": "init_plan"},
+            })
+            logger.info("Stored %d songs in playlist_queue from init_plan (%d valid + fallback)",
+                        len(final_queue), len(valid_remaining))
 
     # 转为前端 Song 格式（WS music.play.payload.song）
     ws_song = _to_frontend_song(first_song) if first_song else None
@@ -311,26 +322,34 @@ async def _handle_llm_decision(state: dict) -> dict:
                 "auto_play": True,
             }
             # ★ 将 LLM 输出的剩余歌曲存入 playlist_queue，实现自动连播
-            if len(songs) > 1:
-                remaining = _to_queue_songs(songs[1:])
-                rds = state.get("dependencies", {}).get("runtime_dj_state")
-                if rds:
-                    if playlist_action == "add":
-                        # "add" 模式：追加到现有队列末尾
-                        existing = rds.get("playlist_queue", []) or []
-                        rds["playlist_queue"] = existing + remaining
-                    else:
-                        # "replace" 模式：替换整个队列
-                        rds["playlist_queue"] = remaining
-                    state_manager.player.update_player_event({
-                        "subtype": "playlist_changed",
-                        "playlist": rds["playlist_queue"],
-                        "strategy": {"source": "llm_decision", "action": playlist_action},
-                    })
-                    logger.info("Stored %d songs in playlist_queue from LLM decision (action=%s)",
-                                len(remaining), playlist_action)
+            #   即使 LLM 只输出了 1 首歌，也用 fallback 补满队列
+            remaining_raw = songs[1:]  # 可能为空
+            # 过滤虚假 song_id + 补满至少 3 首
+            valid = [s for s in remaining_raw if not _is_fake_song_id(s.get("id") or s.get("song_id", ""))]
+            if remaining_raw:
+                logger.info("llm_decision: %d/%d remaining songs valid", len(valid), len(remaining_raw))
+            # 如果有效歌曲不足 3 首，从 fallback 补
+            first_sid = song_id if song_id else ""
+            fallback_pool = [dict(s) for s in _REAL_FALLBACK_SONGS if s["song_id"] != first_sid]
+            final_queue = _to_queue_songs(valid + fallback_pool)[:10]
+            rds = state.get("dependencies", {}).get("runtime_dj_state")
+            if rds:
+                if playlist_action == "add":
+                    existing = rds.get("playlist_queue", []) or []
+                    # 追加前过滤 existing 中的虚假 ID
+                    existing = [s for s in existing if not _is_fake_song_id(s.get("song_id") or s.get("id", ""))]
+                    rds["playlist_queue"] = existing + final_queue
                 else:
-                    logger.warning("Cannot store playlist_queue: runtime_dj_state not in dependencies")
+                    rds["playlist_queue"] = final_queue
+                state_manager.player.update_player_event({
+                    "subtype": "playlist_changed",
+                    "playlist": rds["playlist_queue"],
+                    "strategy": {"source": "llm_decision", "action": playlist_action},
+                })
+                logger.info("Stored %d songs in playlist_queue from LLM decision (action=%s)",
+                            len(final_queue), playlist_action)
+            else:
+                logger.warning("Cannot store playlist_queue: runtime_dj_state not in dependencies")
         elif should_speak:
             # song_id 被拒，但 LLM 计划了说话 → 把 fallback 信息加进 dialogue
             fallback_text = (
@@ -355,7 +374,27 @@ async def _handle_llm_decision(state: dict) -> dict:
                     "song": _to_frontend_song(fallback_song),
                     "auto_play": True,
                 }
+                # 用 fallback 列表填充队列
+                _fill_queue_with_fallback(state, song_id)
                 logger.info("ActionPlanner: fallback play song_id=%s (LLM output 0 songs)", song_id)
+
+    # ★ LLM 输出 keep + songs=0 → 队列空，仍需要播放歌曲
+    if playlist_action == "keep" and not songs and not pending_payload.get("music_play"):
+        fallback_song = _get_fallback_song(state)
+        if fallback_song:
+            song_id = fallback_song.get("song_id") or fallback_song.get("id", "")
+            if song_id and not _is_fake_song_id(song_id):
+                actions.append({
+                    "type": "play_song",
+                    "params": {"song_id": song_id, "auto_play": True},
+                    "reason": "fallback_keep_empty",
+                })
+                pending_payload["music_play"] = {
+                    "song": _to_frontend_song(fallback_song),
+                    "auto_play": True,
+                }
+                _fill_queue_with_fallback(state, song_id)
+                logger.info("ActionPlanner: fallback play song_id=%s (LLM keep + 0 songs)", song_id)
 
     return {
         "actions": actions,
@@ -416,6 +455,24 @@ def _is_fake_song_id(song_id: str) -> bool:
     if not song_id.isdigit():
         return True
     return False
+
+
+def _fill_queue_with_fallback(state: dict, current_song_id: str):
+    """用 _REAL_FALLBACK_SONGS 填充 playlist_queue（排除当前歌曲）。"""
+    queue_songs = [s for s in _REAL_FALLBACK_SONGS if s["song_id"] != current_song_id]
+    if not queue_songs:
+        return
+    rds = state.get("dependencies", {}).get("runtime_dj_state")
+    if not rds:
+        return
+    final_queue = _to_queue_songs(queue_songs)
+    rds["playlist_queue"] = final_queue
+    state_manager.player.update_player_event({
+        "subtype": "playlist_changed",
+        "playlist": final_queue,
+        "strategy": {"source": "fallback"},
+    })
+    logger.info("_fill_queue_with_fallback: filled queue with %d songs", len(final_queue))
 
 
 def _to_frontend_song(raw: dict) -> dict:
