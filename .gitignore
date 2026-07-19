@@ -1,0 +1,61 @@
+# === 敏感信息 ===
+.env
+
+# === Python ===
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+.pytest_cache/
+
+# === IDE ===
+.idea/
+*.iml
+
+# === 运行时数据 ===
+data/
+
+# === 压缩包 ===
+*.zip
+
+# === 冗余/已合并代码 ===
+backend/
+
+# === 冗余目录 ===
+api/music_agent_api（添加日程获取）/
+
+# === 敏感运行态文件 ===
+api/music_agent_api/netease_token.json
+api/music_agent_api/device_id.txt
+
+# === 编辑器/IDE ===
+.vscode/
+
+# === 过时设计文档 ===
+agent-design/
+document/
+*_IMPLEMENTATION_*.md
+PROGRESS.md
+STATE.md
+STATEGRAPH_UPGRADE_*.md
+agent设计_模块类图与关键代码.md
+2026-07-13_v0.6.1_doc_audit_fixes.md
+ACTION_EXECUTOR_IMPLEMENTATION_2026-07-17.md
+HTTP_ROUTES_IMPLEMENTATION_2026-07-17.md
+INIT_PLANNER_IMPLEMENTATION.md
+LLM_INTEGRATION_IMPLEMENTATION_2026-07-17.md
+WS_IMPLEMENTATION_2026-07-17.md
+
+# === 一次性测试脚本 ===
+smoke_test_llm.py
+smoke_test_ws.py
+test_ws_format.py
+
+# === 桌宠根目录生成文件 ===
+SoulChord-deskpet-skin/main.js
+SoulChord-deskpet-skin/npm
+SoulChord-deskpet-skin/preload.js
+
+# === 杂项 ===
+main.py
+NEXT_SESSION_PROMPT.md
