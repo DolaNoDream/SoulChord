@@ -36,12 +36,12 @@ _PLAYER_EVENT_MAP = {
     "play_end": EventType.PLAYER_PLAY_END,
     # 前端 player controls — 映射到已有 EventType 供 feedback_extractor 处理
     "skip": EventType.PLAYER_USER_SKIP,      # 前端 next 按钮 → skip
-    "pause": EventType.PLAYER_PLAY_END,      # 记录暂停状态
+    "pause": EventType.PLAYER_SONG_PROGRESS,  # 暂停只是状态更新，不触发切歌
     "resume": EventType.PLAYER_SONG_STARTED, # 记录恢复播放
 }
 
 
-async def handle_ws_connection(ws: WebSocket, event_queue):
+async def handle_ws_connection(ws: WebSocket, event_queue, runtime_dj_state: dict = None):
     """处理单个 WS 连接生命周期。"""
     await connection_manager.connect(ws)
 
@@ -64,12 +64,12 @@ async def handle_ws_connection(ws: WebSocket, event_queue):
             msg_id = raw.get("id", "")
 
             if msg_type == "chat":
-                await _handle_chat(event_queue, msg_subtype, payload, msg_id)
+                await _handle_chat(event_queue, msg_subtype, payload, msg_id, runtime_dj_state)
             elif msg_type == "player_event":
                 logger.debug("WS player_event at top-level type, prefer status.player_event")
-                await _handle_player_event(event_queue, msg_subtype, payload)
+                await _handle_player_event(event_queue, msg_subtype, payload, runtime_dj_state)
             elif msg_type == "status" and msg_subtype == "player_event":
-                await _handle_player_event(event_queue, payload.get("event", ""), payload)
+                await _handle_player_event(event_queue, payload.get("event", ""), payload, runtime_dj_state)
             elif msg_type == "heartbeat":
                 if msg_subtype == "ping":
                     # ★ v8.2：前端每 30s 发 ping，将其视为心跳避免 60s 后被断
@@ -92,7 +92,7 @@ async def handle_ws_connection(ws: WebSocket, event_queue):
 # ── 消息处理器 ──
 
 
-async def _handle_chat(event_queue, subtype: str, payload: dict, msg_id: str):
+async def _handle_chat(event_queue, subtype: str, payload: dict, msg_id: str, runtime_dj_state: dict = None):
     """chat.user_text / chat.voice_text → EventQueue。"""
     text = payload.get("text", "")
     if not text:
@@ -104,6 +104,11 @@ async def _handle_chat(event_queue, subtype: str, payload: dict, msg_id: str):
     else:
         event_type = EventType.CHAT_SEND
 
+    # ★ P0-2: 用户聊天 → 设置中断标记，后续 play_end 将跳过自动推进
+    if runtime_dj_state:
+        runtime_dj_state["pending_user_interrupt"] = True
+        logger.debug("pending_user_interrupt set (chat)")
+
     event = Event.from_user(event_type, {
         "text": text,
         "subtype": subtype,
@@ -114,12 +119,48 @@ async def _handle_chat(event_queue, subtype: str, payload: dict, msg_id: str):
     logger.info("WS chat enqueued: type=%s text=%.60s", event_type.value, text)
 
 
-async def _handle_player_event(event_queue, subtype: str, payload: dict):
+async def _handle_player_event(event_queue, subtype: str, payload: dict, runtime_dj_state: dict = None):
     """player_event.* → player_mirror + EventQueue。"""
     internal_type = _PLAYER_EVENT_MAP.get(subtype)
     if internal_type is None:
         logger.warning("Unknown player_event subtype=%s", subtype)
         return
+
+    # ★ play_start → 同步更新 RDS current_song + 触发 DJ 介绍新歌
+    #   重复 play_start（同一首歌发两次）只推送一次 DJ_MONOLOGUE，防止双 DJ 话术
+    #   ★ P0-2: pending_user_interrupt 时跳过 DJ_MONOLOGUE（但仍更新 RDS.current_song）
+    #   ★ v9.12 fix: RDS.current_song 必须更新 — play_start 是前端确认播放的唯一信号，
+    #     跳过会导致 RDS.current_song 与实际播放不同步，影响后续 divergence check
+    if subtype == "play_start" and runtime_dj_state is not None:
+        song_id = payload.get("song_id", "")
+        if song_id:
+            _is_new_song = False
+            current = runtime_dj_state.get("current_song") or {}
+            if current.get("song_id") != song_id:
+                runtime_dj_state["current_song"] = {
+                    "song_id": song_id,
+                    "name": payload.get("song_name", current.get("name", "")),
+                    "artist": payload.get("song_artist", current.get("artist", "")),
+                }
+                _is_new_song = True
+                logger.debug("RDS current_song updated via play_start: %s", song_id)
+
+            # ★ DJ_MONOLOGUE：pending_user_interrupt 时跳过（用户说话时 DJ 不该插嘴）
+            if _is_new_song and not runtime_dj_state.get("pending_user_interrupt"):
+                dj_event = Event.from_system(EventType.DJ_MONOLOGUE, {
+                    "song_id": song_id,
+                    "trigger": "play_start",
+                    "song_name": payload.get("song_name", ""),
+                    "song_artist": payload.get("song_artist", ""),
+                    "ts": int(time.time() * 1000),
+                })
+                await event_queue.put(dj_event)
+                runtime_dj_state["last_play_start_dj_ts"] = int(time.time() * 1000)
+                logger.info("WS pushed DJ_MONOLOGUE for play_start: song=%s", song_id)
+            elif _is_new_song and runtime_dj_state.get("pending_user_interrupt"):
+                logger.debug("play_start DJ_MONOLOGUE skipped: pending_user_interrupt set")
+            else:
+                logger.debug("play_start: song=%s already playing (duplicate play_start, skip)", song_id)
 
     # 写 player_mirror
     mirror_ok = update_player_event({"subtype": subtype, **payload})
@@ -130,6 +171,20 @@ async def _handle_player_event(event_queue, subtype: str, payload: dict):
     event = Event.from_system(internal_type, {"subtype": subtype, **payload})
     await event_queue.put(event)
     logger.info("WS player_event enqueued: %s", subtype)
+
+    # ★ DJ 话术触发：song_progress ≥ 85% 时推 DJ_MONOLOGUE
+    if subtype == "song_progress":
+        progress = payload.get("progress", payload.get("position_ratio", 0))
+        if isinstance(progress, (int, float)) and progress >= 0.85:
+            song_id = payload.get("song_id", "")
+            dj_event = Event.from_system(EventType.DJ_MONOLOGUE, {
+                "song_id": song_id,
+                "progress": progress,
+                "trigger": "song_progress",
+                "ts": int(time.time() * 1000),
+            })
+            await event_queue.put(dj_event)
+            logger.info("WS pushed DJ_MONOLOGUE (progress=%.0f%% song=%s)", progress * 100, song_id)
 
 
 async def _send_pong(ws: WebSocket):

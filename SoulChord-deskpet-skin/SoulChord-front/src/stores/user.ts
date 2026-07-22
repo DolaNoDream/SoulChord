@@ -79,12 +79,19 @@ export const useUserStore = defineStore('user', () => {
     } else {
       profile.value.nickname = name
     }
+    localNickname.value = name
     localStorage.setItem('soulchord-nickname', name)
     try { await updateUserBaseInfo({ nickname: name }) } catch { /* 离线时忽略 */ }
   }
 
+  // ========== 用户头像/名字（响应式）==========
+
+  const localAvatar = ref(localStorage.getItem('soulchord-avatar') ?? '')
+  const localNickname = ref(localStorage.getItem('soulchord-nickname') ?? '音乐探索者')
+
   /** 更换头像（本地持久化） */
   function updateAvatar(dataUrl: string) {
+    localAvatar.value = dataUrl
     localStorage.setItem('soulchord-avatar', dataUrl)
     // 同步到后端
     updateUserBaseInfo({ avatar_url: dataUrl }).catch(() => {})
@@ -92,12 +99,27 @@ export const useUserStore = defineStore('user', () => {
 
   /** 本地缓存的头像 */
   function getLocalAvatar(): string {
-    return localStorage.getItem('soulchord-avatar') ?? ''
+    return localAvatar.value
   }
 
   /** 本地缓存的昵称 */
   function getLocalNickname(): string {
-    return localStorage.getItem('soulchord-nickname') ?? '音乐探索者'
+    return localNickname.value
+  }
+
+  // ========== DJ 头像/名字（响应式）==========
+
+  const djAvatar = ref(localStorage.getItem('soulchord-dj-avatar') ?? '')
+  const djName = ref(localStorage.getItem('soulchord-dj-name') ?? 'SoulChord')
+
+  function updateDjAvatar(dataUrl: string) {
+    djAvatar.value = dataUrl
+    localStorage.setItem('soulchord-dj-avatar', dataUrl)
+  }
+
+  function updateDjName(name: string) {
+    djName.value = name
+    localStorage.setItem('soulchord-dj-name', name)
   }
 
   return {
@@ -105,5 +127,7 @@ export const useUserStore = defineStore('user', () => {
     topGenres, topArtists, nickname, avatarUrl,
     loadInit, loadProfile, requestAnalyze, updateBaseInfo,
     updateNickname, updateAvatar, getLocalAvatar, getLocalNickname,
+    localAvatar, localNickname,
+    djAvatar, djName, updateDjAvatar, updateDjName,
   }
 })

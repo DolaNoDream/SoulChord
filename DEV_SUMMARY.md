@@ -1,404 +1,214 @@
-# SoulChord · 项目开发总结
+		## 二十七、2026-07-22 v9.11 — Fish Audio API 端点修复 + 音频闪避 + CORS
 
-> **2026-07-19 更新 v8.4** | 59 Python 源文件，**260 测试通过** | 前端体验修复：刷新空白 (localStorage) + 进度条拖动 (dragPreview) + 搜索空结果 3 级兜底
+**从错误 Fish Audio API 端点 → 正确 v1 API + 前端音频体验修复**
 
----
+| # | 改动 | 详情 | 文件 |
+|---|------|------|------|
+| ① | **TTS API 端点修复** | `https://fishaudio.org/api/open/v1/speech/tts` → `https://api.fish.audio/v1/tts`；参数 `voiceId` → `reference_id`；模型从 body `modelId` 改为 header `model: s2.1-pro-free`；语速 `speed` → `prosody.speed` | `tts_service.py` |
+| ② | **ASR API 端点修复** | `https://fishaudio.org/api/open/v1/speech/transcriptions` (JSON) → `https://api.fish.audio/v1/asr` (multipart/form-data)；参数从 `audio_url` 改为 `audio_data` (bytes) | `asr_service.py` |
+| ③ | **Base URL 默认值更新** | `https://fishaudio.org/api/open/v1` → `https://api.fish.audio` | `config.py` |
+| ④ | **代理音频 CORS 修复** | StreamingResponse + FileResponse 加 `Access-Control-Allow-Origin: *` | `http_routes.py` |
+| ⑤ | **TTS 日志增强** | action_executor 区分 audio=yes/NO；emit_response dj.speech 日志含 audio_url | `action_executor.py`, `emit_response.py` |
+| ⑥ | **前端持久 TTS 元素** | 模块级 `_ttsAudio` 单例替代局部 `new Audio()`，避免 GC 回收导致播放中断 | `useWebSocket.ts` |
+| ⑦ | **音频闪避** | TTS 说话时音乐音量降至 15%，结束后恢复原始音量；`_duckMusic()` / `_unduckMusic()` 含防重复闪避保护 | `useWebSocket.ts` |
+| ⑧ | **DigitalOrb 音频静默 Bug** | `createMediaElementSource` 未连 `ctx.destination` → 若执行会切断所有音频输出 | `DigitalOrb.vue` |
+| ⑨ | **WsMessageType 补充** | 加 `'tts'` 类型枚举 | `chat.ts` |
+| ⑩ | **ASR 测试更新** | 适配新 bytes 接口 | `test_skeleton_services.py` |
 
-## 一、项目定位
+**改动规模**：10 文件（7 后端 + 3 前端 + 1 测试）
 
-**SoulChord** = Windows 桌面"AI DJ Agent"。AI 通过**对话 + 音乐 + 飞书日程感知**主动提供**情绪陪伴**（不是音乐推荐工具）。
-
-**三模块架构**：
-```
-Electron+Vue3 窗口（5 tab）  ←WS+HTTP→  Python Agent Runtime（8000）  ←HTTP→  music_agent_api（8081, Docker）
-   前端同学                                 本仓库                                 队友
-```
-
----
-
-## 二、技术栈
-
-| 维度 | 选型 | 备注 |
-|---|---|---|
-| Agent 框架 | **LangGraph StateGraph** | 8 节点，禁 while True: graph.invoke() |
-| LLM | **DeepSeek**（API 兼容 OpenAI） | 经 LLMService.call_json(prompt) |
-| TTS / ASR | **讯飞** | MVP mock，P2 接真实 |
-| 音乐源 | **网易云** | 经队友 music_agent_api |
-| 日程源 | **飞书** | MVP mock，P2 OAuth |
-| 持久化 | **JSON 文件** | 不用 SQLite/向量库 |
-| UI | **Electron + Vue3** | 普通窗口，砍桌宠/Live2D，5 tab |
+**验证**：33/34 通过（1 预存 e2e 失败），0 新失败。
 
 ---
 
-## 三、架构总览
+## 二十六、2026-07-21 v9.10 — Fish Audio 真实 TTS + ASR
 
-### 运行时序
+**从 mock 语音 → 真实 Fish Audio API**
 
-```
-lifespan 10 步
-  Step 1:   Init adapter
-  Step 2:   Compile graph（8 节点 StateGraph）
-  Step 2.5: Init data files（6 JSON 首次启动自动生成）
-  Step 2.7: Configure LLMService（DeepSeek）
-  Step 3:   Warmup memory
-  Step 4:   Load RuntimeDJState（长寿 in-memory）
-  Step 5:   EventQueue ready + bind EventService
-  Step 6:   Start EventDispatcher（while True 消费 EventQueue）
-  Step 6.5: Start WS sender + heartbeat loops
-  Step 7:   Start Scheduler（4 Timer Loop）
-  Step 8:   Runtime ready signal
-  Step 9:   decide_init_mode → 推 AGENT_INIT（first/new_day）/ REPLAN_REQUEST（resume）
+| # | 改动 | 详情 | 文件 |
+|---|------|------|------|
+| ① | **TTSService 重构** | 替换 `xunfei_mock` 为真实 Fish Audio 同步 HTTP API，音频缓存到 `data/tts/`，API Key 缺失时静默降级 | `tts_service.py` |
+| ② | **ASRService 重构** | 替换 `xunfei_mock` 为真实 Fish Audio 转写 API | `asr_service.py` |
+| ③ | **TTS 音频服务端点** | 新增 `GET /api/tts/audio/{filename}` 提供缓存音频文件 | `http_routes.py` |
+| ④ | **WS 消息带真实 audio_url** | emit_response 传递 audio_url → WS 消息不再硬编码空字符串 | `emit_response.py`, `ws_sender.py` |
+| ⑤ | **前端播放 TTS 音频** | useWebSocket.ts 新增 `case 'tts'` + DJ 话术播放 audio_url | `useWebSocket.ts` |
+| ⑥ | **前端类型补充** | 新增 `TtsSynthesizePayload` 接口 | `chat.ts` |
+| ⑦ | **配置 + Key** | config.py + .env 新增 Fish Audio 配置项 | `.env`, `config.py` |
 
-EventDispatcher loop:
-  while True:
-      event = await queue.get()           # Runtime 负责生命周期
-      state = build_initial_state(...)
-      result = await graph.ainvoke(state)  # Graph 单次 invoke
+**改动规模**：10 文件（6 后端 + 2 前端 + 1 测试 + 1 配置）
 
-Scheduler 4 Timer Loop:
-  feishu(5min) / heartbeat(30s) / playlist_health(10min) / program_tick(30min)
-```
-
-### 8 节点 StateGraph
-
-```
-router（条件边 6 路分流）
-  ├→ player_event → feedback_extractor / action_planner / emit
-  ├→ system_init → context_builder → dj_planner(INIT) → action_planner → action_executor → tool_dispatcher → emit
-  ├→ conversation → context_builder → dj_planner(CONV) → action_planner → action_executor → tool_dispatcher → emit
-  ├→ timer_event → context_builder → dj_planner(TIMER) → action_planner → action_executor → emit
-  ├→ replan_event → context_builder → dj_planner(REPLAN) → action_planner → action_executor → emit
-  └→ user_control / system → action_planner → action_executor → emit
-
-Tool Loop（最多 1 次）:
-  dj_planner → tool_dispatcher（pending_tool_calls 非空）→ dj_planner（tool_messages 给 LLM）→ action_planner
-```
-
-### 10 Service + ToolAdapter
-
-```
-DJ Planner LLM 看到的 6 DJ_TOOLS：
-  play_music / get_environment_context / query_user_preference /
-  update_memory / manage_playlist / query_calendar
-        ↓
-  ToolAdapter.dispatch(tool_name, args) — compose 多 Service 方法
-        ↓
-  10 Service 层（每个方法 = 1 次外部调用）：
-  MemoryService / ProgramService / PlayerService / EnvironmentService /
-  MusicService / EventService / TTSService / LLMService / FeishuService / ASRService
-```
-
-### WS 实时通信（5 type）
-
-```
-chat / music / status / error / heartbeat
-  → ws_manager（ConnectionManager）
-  → ws_sender（ws_out_queue + sender loop + WSMessageBuilder）
-  → ws_handler（端点 + 消息分发）
-  → heartbeat: server 30s ping / 60s timeout
-```
-
-### HTTP 9 群组路由
-
-```
-init / settings / playlist / user / feedback / history / health / netease / feishu
-  → 均经 Store 层（settings_store / playlist_store / memory_store / player_state / program_state）
-  → route 不直接 open json
-  → 统一响应格式 {"ok": bool, "data": ..., "error": ...}
-```
+**验证**：317/321 通过（4 预存失败），0 新失败。
 
 ---
 
-## 四、关键设计决策（不可动摇）
-
-| # | 决策 | 约束 |
-|---|---|---|
-| ① | Runtime 负责生命周期 / Graph 单次 invoke | 禁 `while True: graph.invoke()`（3 理由：消耗 token / Agent 幻想 / 无法抢占优先级） |
-| ② | Memory vs DJState 隔离 | Memory（用户记忆，JSON 持久化）vs RuntimeDJState（AI 运行态，in-memory only） |
-| ③ | Node 不直接 IO | 经 `agent/state/` 4 模块（memory_store / program_state / player_state / runtime_dj_state）+ state_manager |
-| ④ | Mirror ≠ Source of Truth | Player Mirror 单向 Electron→Agent，播放状态以前端 player_event 为准 |
-| ⑤ | plan_owner ≠ action_owner | DJ Planner 决定"为什么做"（不写 actions）；Action Planner 决定"如何执行" |
-| ⑥ | 长寿 vs per-invoke | RuntimeDJState 长寿 in RuntimeContext；Node 经 `state["runtime_snapshot"]` 读快照 |
-| ⑦ | 4 组同名陷阱 | ① today_theme ≠ current_scene ② preference ≠ feedback ③ context ≠ program_state ④ Memory context vs RuntimeDJState |
-| ⑧ | Node return dict|str | 不调 `state.update()` |
-| ⑨ | tool_loop_count 普通字段 | 无 reducer，Node 在 partial update 中 +1 |
-| ⑩ | context_builder 不读 RDS | snapshot 由 Runtime invoke 前注入 AgentState.runtime_snapshot |
+- 全量回归：317/321 通过（4 预存 music_agent_api 不可用 / e2e）
 
 ---
 
-## 五、Agent 包结构
+## 二十五、2026-07-21 v9.9 — AI 电台 UI 重设计
 
-```
-agent/
-├── __main__.py              # python -m agent（uvicorn）
-├── config.py                # Settings + SchedulerConfig（环境变量）
-├── graph.py                 # ★ StateGraph 8 节点 + 3 conditional + 5 direct edges
-├── shared/enums.py          # 8 枚举（TriggerType / EventPriority / EventType / InitMode / ...）
-├── state/                   # IO 抽象层（Node 不直接 open json）
-│   ├── agent_state.py       # AgentState TypedDict
-│   ├── program_state.py     # program_state.json 读写（v0.6 11 字段）
-│   ├── player_state.py      # player_mirror.json + load_history() 分页
-│   ├── memory_store.py      # Memory 4 category + TTL + CRUD
-│   ├── settings_store.py    # settings.json CRUD
-│   ├── playlist_store.py    # playlists.json CRUD
-│   ├── runtime_dj_state.py  # RuntimeDJState 重建 + snapshot deepcopy
-│   ├── data_initializer.py  # 首次启动 6 JSON 自动生成
-│   └── state_manager.py     # 统一封装代理
-├── routes/
-│   └── http_routes.py       # HTTP 8 群组（register_http_routes 统一注册）
-├── runtime/
-│   ├── event_queue.py       # asyncio.PriorityQueue（P0/P1/P3）
-│   ├── dispatcher.py        # while True 消费 EventQueue → graph.ainvoke
-│   ├── dispatcher_helpers.py
-│   ├── scheduler.py         # 4 Timer Loop
-│   ├── ws_manager.py        # ConnectionManager
-│   ├── ws_sender.py         # ws_out_queue + sender loop
-│   ├── ws_handler.py        # WS 端点 + 消息分发
-│   └── lifespan.py          # FastAPI app + 10 步启动
-├── prompts/
-│   ├── __init__.py          # 导出 3 format 函数
-│   ├── init_prompt.py       # INIT_PROMPT
-│   ├── conversation_prompt.py  # CONVERSATION_PROMPT（REPLAN 复用）
-│   └── timer_prompt.py      # TIMER_PROMPT（4 timer_type 分支）
-├── nodes/                   # 8 Graph Node（均 return dict|str）
-│   ├── router.py            # 条件边 6 路分流
-│   ├── context_builder.py   # 5 域并行加载
-│   ├── dj_planner.py        # 4 prompt 模式（INIT/CONV/TIMER/REPLAN）
-│   ├── action_planner.py    # song_finished + transition speech + song_id 校验
-│   ├── action_executor.py   # 消费 actions[] → Service（含 play_url=None 处理）
-│   ├── emit_response.py     # WS 消息入 ws_out_queue
-│   ├── feedback_extractor.py  # user_like/dislike/skip/play_end
-│   └── tool_dispatcher.py   # 执行 pending_tool_calls
-└── services/
-    ├── adapter.py           # ToolAdapter 6 DJ_TOOLS dispatch（结构化错误返回）
-    ├── memory_service.py
-    ├── program_service.py
-    ├── player_service.py
-    ├── environment_service.py  # 4 mock（weather/time/location/activity）
-    ├── music_service.py        # 真实 HTTP 调用 music_agent_api:8081，无 mock URL
-    ├── tts_service.py          # TTS mock（xunfei_mock）
-    ├── event_service.py        # EventQueue 封装 + push_replan
-    ├── llm_service.py          # DeepSeek API（retry + 结构化 error）
-    ├── feishu_service.py       # 飞书骨架（get_calendar_current/today mock）
-    └── asr_service.py          # ASR 骨架（recognize mock）
-```
+**从"音乐播放器" → "AI 电台控制室"**
+
+| # | 改动 | 详情 | 文件 |
+|---|------|------|------|
+| ① | **Center Stage 布局** | 时钟→柱状图→2×2 网格播放区→广播稿聊天→输入区 | `DashboardView.vue` |
+| ② | **主题色重构** | 深黑蓝 #05070D、电台绿 #19E6A2、AI 蓝紫 #6675FF、暖橙 #FFB86C | `variables.scss` |
+| ③ | **点阵交互背景** | Canvas 绘制，鼠标产生球体隆起（位移+变亮），白天灰/黑夜白 | **NEW** `DotGrid.vue` |
+| ④ | **像素柱状图可视化** | 20 根方块柱，Web Audio API 真实频率，激昂高/轻柔低 | **NEW** `DigitalOrb.vue` |
+| ⑤ | **数字时钟** | Silkscreen 72px → Orbitron 96px + text-shadow glow | `ClockDisplay.vue` |
+| ⑥ | **标题栏重做** | ● Claude + ● ON AIR（呼吸灯）+ ☾ 主题切换 + ⚙ 齿轮 | `App.vue` |
+| ⑦ | **播放区 2×2 网格** | 左列歌名+PLAYING / 右列控制按钮跨行居中；emoji→薄线符号 | `MusicPlayer.vue` |
+| ⑧ | **广播稿聊天** | 无头像气泡，role 标签+玻璃卡片+IBM Plex Mono | `ChatBubble.vue` |
+| ⑨ | **日夜主题** | CSS 变量覆盖深色/浅色两套色值，localStorage 持久化 | `variables.scss`/多组件 |
+| ⑩ | **封面图隐藏** | 删除 UI `<img>`，后端 `cover_url` 接口保留 | `MusicPlayer.vue` |
+
+**改动规模**：11 文件 + 2 新建（DotGrid.vue、DigitalOrb.vue）
+
+**验证**：构建通过，dev server 正常。
 
 ---
 
-## 六、测试覆盖
+## 二十四、2026-07-21 v9.7 — 歌单管理 + 添加到歌单 + DJ 话术重复修复
 
-| 测试文件 | 用例数 | 覆盖范围 |
-|---|---|---|
-| `test_init_planner.py` | 57 | Init Planner + 路由 + P0-2 + song_finished + transition speech + StateGraph |
-| `test_scheduler.py` | 13 | Scheduler 生命周期 + 4 Timer EventType |
-| `test_dj_planner_prompts.py` | 27 | 4 prompt schema + Tool Loop + LLM + **_is_fake_song_id 校验** |
-| `test_action_executor.py` | 14 | TTSService + ActionExecutor + 异常降级 + **play_url=None 处理** |
-| `test_llm_service.py` | 16 | LLMService 成功/重试/API 异常/配置/JSON 边界 |
-| `test_ws_phase2.py` | 9 | emit WS 输出 + ConnectionManager heartbeat/broadcast |
-| `test_http_routes.py` | 51 | HTTP 11 群组全覆盖（含 feishu + feedback POST + memory）+ 统一响应格式 + Store 隔离 + netease 代理测试 |
-| `test_data_initializer.py` | 10 | 6 JSON 创建/内容/不覆盖/类型/序列化 |
-| `test_skeleton_services.py` | 11 | Feishu/ASR schema + adapter dispatch + **play_music 空 query/真实 query 测试** |
-| `tests/e2e/ (4 files)` | 44 | 启动/WS chat 全链路/player_event/Tool Loop |
-| **合计** | **260** | **~5.7s 运行** |
+### 歌单管理功能
 
----
+**新增功能（4 项）**：
+| # | 功能 | 实现 |
+|---|------|------|
+| ① | **新建歌单** | PlaylistPanel 顶部"✚ 新建"按钮 → 弹窗输入名称 → `POST /api/playlist/create` |
+| ② | **保护网易云导入的歌单** | 后端 `DELETE` 检查 `netease_id`，有值返回 1002 拒绝删除；前端删除按钮自动禁用 + hover 提示 |
+| ③ | **添加到歌单** | MusicPlayer ❤️ 按钮改为下拉菜单，显示所有用户创建的歌单，点击即添加；底部"✚ 新建歌单并添加" |
+| ④ | **后端 add_song API** | `POST /api/playlist/{id}/songs` + `playlist_store.add_song()`（含 song_id 去重） |
 
-## 七、数据文件
+**改动文件（7 文件）**：
+| 文件 | 改动 |
+|------|------|
+| `agent/routes/http_routes.py` | +`POST /api/playlist/create` / `POST /api/playlist/{id}/songs`；DELETE 保护网易云 |
+| `agent/state/playlist_store.py` | +`add_song(playlist_id, song)` |
+| `frontend/src/types/music.ts` | Playlist 接口 +`netease_id`/`remark` |
+| `frontend/src/api/agent.ts` | +`createPlaylist()` / `addSongToPlaylist()` |
+| `frontend/src/stores/playlist.ts` | +`createPlaylist()` / `addSong()` / `isNeteaseImported()` / `userPlaylists` |
+| `frontend/src/components/PlaylistPanel.vue` | 新建按钮 + 弹窗 + 网易云删除保护 |
+| `frontend/src/components/MusicPlayer.vue` | ❤️ → 添加到歌单下拉菜单 |
 
-| 文件 | 路径 | 用途 |
-|---|---|---|
-| memory.json | data/memory.json | Memory 4 category（profile/preference/context/feedback）|
-| program_state.json | data/program_state.json | 节目状态 v0.6 11 字段 |
-| settings.json | data/settings.json | 用户设置（APIKey 等）|
-| playlists.json | data/playlists.json | 歌单列表 |
-| player_history.json | data/player_history.json | 播放历史 |
-| player_mirror.json | data/player_mirror.json | Electron→Agent 播放状态同步 |
+### DJ 话术重复修复
 
-所有数据文件由 `init_data_files()` 在 lifespan Step 2.5 首次启动自动生成。
+| # | 问题 | 根因 | 修复 |
+|---|------|------|------|
+| ④ | 同一首歌 DJ 说两次（相近话术） | ws_handler play_start 推 DJ_MONOLOGUE 后，scheduler heartbeat 30s backstop 在 `last_dj_speech_song_id` 未更新前也推了一条 → 两条几乎同时入队 | RDS 加 `last_play_start_dj_ts`；scheduler backstop 检查该标记 < 30s 则跳过 |
 
----
+**改动文件（2 文件）**：
+| 文件 | 改动 |
+|------|------|
+| `agent/runtime/ws_handler.py` | 推 DJ_MONOLOGUE 后记录 `runtime_dj_state["last_play_start_dj_ts"]` |
+| `agent/runtime/scheduler.py` | `_check_dj_monologue_backstop` 检查 `last_play_start_dj_ts` < 30s → 跳过 |
 
-## 八、启动方式
-
-```bash
-cd dev
-export DEEPSEEK_API_KEY="sk-xxx"    # 设置启用真实 LLM
-python -m agent                      # 启动 Agent Runtime（8000）
-```
-
-WS 端点：`ws://localhost:8000/ws/client`
-HTTP 端点：`http://localhost:8000/api/health`
-
-**完整 3 终端启动：**
-```bash
-# 终端 1: Node.js 网易云底层
-npx NeteaseCloudMusicApi
-
-# 终端 2: 队友的 FastAPI 代理
-cd api/music_agent_api && uvicorn main:app --port 8081
-
-# 终端 3: Agent Runtime (8000)
-cd dev && python -m agent
-```
-
----
-
-## 九、已验证的全链路
+### DJ 话术架构（v9.7 最终版）
 
 ```
-WS 聊天 → EventQueue → EventDispatcher → graph.ainvoke(8节点)
-  → router → context_builder → dj_planner(真实DeepSeek, 2次调用)
-  → tool_dispatcher(play_music 搜索 → music_agent_api:8081 → 网易云)
-  → dj_planner(合成搜索结果) → action_planner(music_play)
-  → action_executor(get_play_url) → emit_response → WS chat.reply + music.play
+触发链路：
+  play_start（主）
+    → ws_handler: RDS current_song 同步 + 推 DJ_MONOLOGUE + 记录 last_play_start_dj_ts
+    → Graph: ... → emit_response(dj.speech)
+  
+  heartbeat 30s 兜底（safety net）
+    → _check_dj_monologue_backstop
+    → 检查 last_play_start_dj_ts < 30s → 跳过（抑制与 play_start 的竞态）
+    → 否则条件满足时推 DJ_MONOLOGUE
+
+去重机制（4 层）：
+  1. ws_handler: song_id 未变化 → 不推 DJ_MONOLOGUE（相同 song_id 防重）
+  2. ws_handler: last_play_start_dj_ts → scheduler backstop 30s 内跳过（防 scheduler 竞态）
+  3. dj_host: 60s dedup（节点级，防 Graph 内重复）
+  4. dj_host: L1 cache 5min TTL（LLM 调用级消除冗余）
 ```
 
----
+## 二十三、2026-07-21 v9.6 — 聚焦当前歌 + RESUME 自动播放 + play_start 去重
 
-## 十、2026-07-18 网易云登录全链路实现（v5）
+### 问题清单
 
-### 改动文件
+| # | 问题 | 根因 | 修复 |
+|---|------|------|------|
+| ① | DJ 话术总在介绍下一首歌 | prompt 有 `【下一首预告】` 节显式告诉 LLM 下首歌名；模板 L3 也引入下一首 | 删除整个节 + 模板聚焦当前歌；format 不再接受 next_song |
+| ② | 重启后不放歌、AIDJ 不说话 | RESUME 模式推 REPLAN_REQUEST，LLM 见队列有歌 + `已暂停` → `action=keep` + 空 songs → action_planner 无 play_song | `未播放` 修正误导 + RESUME 安全网自动播第一首 |
+| ③ | 同一首歌 DJ 说两次 | `next()` + `playSong()` 都发 play_start → 两个 DJ_MONOLOGUE → 并发生成双话术 | ws_handler 去重：相同 song_id 只推一次 DJ_MONOLOGUE |
+
+### 改动文件（5 文件）
 
 | 文件 | 改动 |
 |------|------|
-| `api/music_agent_api/auth_manager.py` | 新增 `login_phone/qr_key/qr_create/qr_check/login_status/logout/is_logged_in` 6 方法 + `_save_token` |
-| `api/music_agent_api/main.py` | 新增 6 个登录端点：`POST /login/phone`、`GET /login/qr-key`、`GET /login/qr-create`、`POST /login/qr-check`、`GET /login/status`、`POST /login/logout` |
-| `api/music_agent_api/schemas.py` | 新增 `PhoneLoginRequest`、`QrCheckRequest` |
-| `agent/routes/http_routes.py` | 删除全部 netease mock，改为代理到 music_agent_api；`/api/init` 同步改用真实状态 |
-| `frontend/src/api/agent.ts` | 新增 `postNeteasePhoneLogin` / `getNeteaseQrKey` / `getNeteaseQrCreate` / `postNeteaseQrCheck` |
-| `frontend/src/components/SettingsDrawer.vue` | 登录弹窗重构：tabs（手机号登录 + 扫码登录），QR 码显示 + 2s 轮询 |
-| `frontend/src/stores/player.ts` | 修复 autoplay 策略：play() 失败时回退 isPlaying=false，让用户手势触发 |
-| `frontend/src/stores/chat.ts` | 新增 `isSending` 状态 |
-| `frontend/src/composables/useChat.ts` | 改用 store.isSending，修复输入框卡死 |
-| `frontend/src/composables/useWebSocket.ts` | 收到 chat.reply 时重置 isSending=false |
-| `tests/test_http_routes.py` | TestNetease 更新测试新代理行为 |
+| `agent/prompts/dj_speech_prompt.py` | 删除 `【下一首预告】` + `{next_song_section}`，format 不再接受/使用 next_song |
+| `agent/services/dj_host_service.py` | 模板层 L3 `_generate_template` 聚焦当前歌曲，废弃 next_song 变体 |
+| `agent/runtime/ws_handler.py` | play_start 推 DJ_MONOLOGUE 移到 RDS 更新守卫内（song_id 变化才推） |
+| `agent/nodes/action_planner.py` | `_handle_llm_decision` 末尾加 RESUME 安全网检查：队列有歌 + 无 current_song → 自动播第一首 |
+| `agent/prompts/conversation_prompt.py` | `播放状态：已暂停` → `未播放`（当前无歌时） |
 
-### 已知剩余问题
+### DJ 话术架构（v9.6 最终版）
 
-| # | 问题 | 原因 | 状态 |
-|---|------|------|------|
-| ① | `/api/proxy/audio` 网易云 CDN 返回 `text/html` | 某些歌曲 `outer/url` 端点返回 HTML 页面而非音频 | 需队友修复 |
-| ② | WS 响应耗时 15-20s | 2 次 LLM × ~7s + 工具调度 | 可接受，非 bug |
-| ③ | 飞书 HTTP 接口（status/connect/disconnect/today/refresh）| 未实现 | P1 |
-| ④ | Memory HTTP 接口（query/update/delete）| 未实现 | P1 |
-| ⑤ | 真实 TTS/ASR/Feishu | mock→真实 | P2 |
+```
+prompt 结构：
+  【用户】{user_info}
+  【当前正在播放的歌曲】{current_song_info}
+  → 无【下一首预告】节，LLM 不知下一首歌名
 
-| # | 问题 | 原因 | 状态 |
-|---|------|------|------|
-| ① | play_url 只有 20 秒试听 | 网易云对非免费歌只返回试听片段；`auth_manager.py` 只用了匿名登录，无 VIP cookie | **需队友加登录接口** |
-| ② | WS 响应耗时 15-20s | 2 次 LLM × ~7s + 工具调度 | 可接受，非 bug |
-| ③ | 前端联调（剩余 WS `id` / HTTP 端点补齐） | 契约可选字段；Memory+飞书 HTTP 未实现 | P1 |
-| ④ | 飞书 OAuth / HTTP 补齐 | status/connect/disconnect/today/refresh | P1 |
-| ⑤ | Memory HTTP 补齐 | query/update/delete | P1 |
-| ⑥ | 真实 TTS/ASR | mock→真实 | P2 |
+模板 L3（fallback）：
+  聚焦当前歌曲名，4 mood 各自围绕当前歌展开
+  （energetic/warm/reflective/neutral 各有模板）
+
+触发去重：
+  ws_handler: song_id 未变化 → 不推 DJ_MONOLOGUE
+  dj_host: 60s dedup + L1 cache 5min TTL
+```
 
 ---
 
-## 十一、2026-07-19 飞书 OAuth + 日程 HTTP 全链路实现（v8）
+## 二十二、2026-07-20 DJ Host Agent 修复 Round 2 — 同步 + 触发 + 前端显示
 
-### 改动文件
+### 问题清单
 
-| 文件 | 改动 |
-|------|------|
-| `api/music_agent_api/main.py` | 合并飞书代码：新增飞书配置/`get_direct_session()`/`get_feishu_tenant_access_token()`/3 个飞书端点 + 自动加载 `.env` + 更新 `device/info` |
-| `api/music_agent_api/docker-compose.yml` | 加 `FEISHU_APP_ID`/`FEISHU_APP_SECRET`/`NO_PROXY` |
-| `agent/routes/http_routes.py` | 新增 Section 10 feishu：5 个端点（status/auth-url/calendar-today/calendar-current/refresh）+ 更新 `/api/init` calendar 字段 |
-| `tests/test_http_routes.py` | 新增 `TestFeishu` 5 测试 + `TestResponseFormat` 加飞书端点 |
-| `.env` | 加飞书配置节（`FEISHU_APP_ID`/`FEISHU_APP_SECRET`/`FEISHU_BASE_URL`/`FEISHU_REDIRECT_URI`） |
-
-### Agent 飞书代理路由
-
-| 端点 | 行为 |
-|------|------|
-| `GET /api/feishu/status` | 代理到 music_agent_api → 返回 `connected` 状态 |
-| `GET /api/feishu/auth/url` | 代理到 music_agent_api → 返回飞书 OAuth 授权 URL |
-| `GET /api/feishu/calendar/today` | 先尝试真实数据 → 失败回退 mock |
-| `GET /api/feishu/calendar/current` | 先尝试真实数据 → 失败回退 mock |
-| `POST /api/feishu/refresh` | no-op |
-
-### 数据流
-
-```
-前端 → agent:8000/api/feishu/... → proxy → music_agent_api:8081/api/v1/feishu/... → 飞书 Open API
-```
-
-OAuth 流程：
-1. 前端调 `GET /api/feishu/auth/url` 获取飞书扫码 URL
-2. 用户浏览器打开 → 飞书二维码 → 手机飞书扫码
-3. 浏览器回调到 `music_agent_api:8081/api/v1/feishu/auth/callback?code=xxx`
-4. 换取 `user_access_token` 并缓存（内存）
-5. 后续日程查询使用该 token 调飞书日历 API
-
-### 已知剩余问题
-
-| # | 问题 | 原因 | 状态 |
+| # | 问题 | 根因 | 修复 |
 |---|------|------|------|
-| ① | 前端自动播放策略：WS重连后第二首歌需用户点击 | 浏览器限制 `audio.play()` | 已加click恢复，待验证 |
-| ② | 真实 TTS/ASR | mock→真实 | P2 |
-| ③ | feedback_writer 拆分 / resume handler | 架构细化 | P2 |
+| ① | `dj_monologue` 事件无输出 | `action_planner_node` 的 catch-all 返回 `pending_payload: None`，覆盖了 `dj_host` 设置的 `dj_speech` | +`_handle_dj_monologue()` 透传 `dj_speech` + `tts_speak` action |
+| ② | 前端不显示 DJ 话术 | `useWebSocket.ts` `handleMessage` 无 `case 'dj'`，`dj.speech` 静默丢弃 | +`case 'dj'` handler，显示 🎙️ 气泡；`chat.ts` +`'dj'` 类型 + `DjSpeechPayload` |
+| ③ | DJ 说的歌不对（RDS 不同步） | 前端 `onSongEnded` 先 `next(true)` 本地推进再发 `play_end`；`next()` 本地切歌后不发 `play_start` | 交换 `onSongEnded` 顺序（先发 `play_end`）；`next()`/`_playFromQueue` 本地推进后发 `play_start`（含 song_name/artist） |
+| ④ | 后端 RDS 不跟随前端切歌 | `ws_handler` 收到 `play_start` 只写 player_mirror，不更新 RDS `current_song` | `play_start` handler 同步更新 RDS + 推 `DJ_MONOLOGUE`（新触发方式） |
+| ⑤ | QueuePanel 看不到后续歌曲 | `emit_response` 只发 `music.play`，不发 `music.update_playlist` | 发 `music.play` 后同步从 snapshot 取 `playlist_queue` 发 `update_playlist` |
+| ⑥ | DJ 话术介绍的是下一首歌 | prompt 写"介绍即将播放的下一首歌" | 改为"以当前正在播放的歌曲为主，下一首作为延伸话题" |
 
----
-
-## 十二、2026-07-19 v8.3 自动连播全链路实现
-
-### 本轮目标
-
-**播放队列自动连播**：启动后自动生成歌单 → 歌曲播完自动切下一首 → LLM 输出直接入队 → 歌曲失败自动跳过。
-
-### 改动文件（11 文件）
+### 改动文件（9 文件）
 
 | 文件 | 改动 |
 |------|------|
-| `agent/nodes/router.py` | `skip` 加入 player_event subtype 列表，修复 next() 发 WS `skip` 未被路由 |
-| `agent/nodes/feedback_extractor.py` | 新增 `"skip"` 反馈写入分支 |
-| `agent/nodes/action_planner.py` | **核心改动**：INIT playlist_queue 入队 / `_handle_song_finished` 消费队列 / LLM decision 的 `songs[1:]` 入队 / 支持 `action=add|replace` |
-| `agent/nodes/action_executor.py` | 新增 `_pop_failed_from_queue()` — play_url 失败时自动移除失效歌曲 + REPLAN |
-| `agent/nodes/dj_planner.py` | 新增 `_REAL_SONGS`（10 首真实网易云 ID）/ `_ensure_tool_calls()` 安全网 / mock 全部使用真实 ID |
-| `agent/runtime/lifespan.py` | Resume 模式推 `REPLAN_REQUEST`（之前跳过不推，启动后无歌可播） |
-| `agent/prompts/conversation_prompt.py` | REPLAN 额外说明改为"先用 play_music 搜索真实歌曲，不要编造 song_id" |
-| `agent/state/player_state.py` | 新增 `_is_test_song()` 过滤测试记录（Song 1/Next/测试歌曲）不写入播放历史 |
-| `SoulChord-deskpet-skin/SoulChord-front/src/stores/player.ts` | `prev()` 修复：设 audioElement.src + play()（之前只更新状态不调播放） |
-| `tests/test_init_planner.py` | Resume 测试断言改为 `qsize() == initial_size + 1` |
-| `tests/test_dj_planner_prompts.py` | 3 个 REPLAN 测试断言 `next_node` 改为 `"tool_dispatcher"` |
+| `agent/nodes/action_planner.py` | +`_handle_dj_monologue()` 透传 dj_speech + tts_speak action |
+| `agent/runtime/ws_handler.py` | `play_start` 同步 RDS `current_song` + 推 `DJ_MONOLOGUE` 事件 |
+| `agent/runtime/ws_sender.py` | +`build_music_update_playlist()` + `_queue_song_to_frontend()` |
+| `agent/nodes/emit_response.py` | `music.play` 后发 `music.update_playlist` 同步完整队列 |
+| `agent/prompts/dj_speech_prompt.py` | prompt 指令改为"以当前歌曲为主，下一首为延伸" |
+| `agent/runtime/lifespan.py` | WS 端点注入 `_runtime_dj_state` |
+| `frontend/src/stores/player.ts` | `onSongEnded` 顺序交换；`next()`/`_playFromQueue` 加 `play_start` 通知 |
+| `frontend/src/composables/useWebSocket.ts` | +`case 'dj'` 处理 DJ 话术显示 |
+| `frontend/src/types/chat.ts` | +`'dj'` WS 类型 + `DjSpeechPayload` 接口 |
 
-### 启动数据流
+### DJ 触发新架构
 
 ```
-lifespan Step 9 decide_init_mode:
-  first_init  → AGENT_INIT → dj_planner(INIT) → init_plan 含 initial_playlist → action_planner
-    → 取 first_song 播放，其余 songs[1:] 写入 RuntimeDJState.playlist_queue + player_mirror.json
-  new_day     → AGENT_INIT → 同上（日期不匹配时重建）
-  resume      → REPLAN_REQUEST → dj_planner(REPLAN) → _ensure_tool_calls 注入 play_music → tool loop 搜索 →
-    → 搜索结果入 playlist_decision → action_planner 取 songs[0] 播放，songs[1:] 入队
+旧：song_progress ≥85%（前端不发）→ 死代码
+     scheduler heartbeat 30s 兜底 → 延迟高
 
-song_finished / user_skip / play_end:
-  → action_planner._handle_song_finished
-    → 读 playlist_queue[0] → 出队 → 播放下一首
-    → 队列空 → 设 needs_replan=True → dispatcher 推 REPLAN_REQUEST
+新：play_start 主触发（前端每切歌必发）
+  → ws_handler 同步 RDS current_song + 推 DJ_MONOLOGUE
+  → scheduler heartbeat 30s 兜底（作为 safety net，被 play_start dedup 压制）
 
-play_url 失败（text/html / 404）:
-  → action_executor._pop_failed_from_queue
-    → 检查队列第一首是否匹配 → 匹配则弹出 + 更新 player_mirror → needs_replan=True
-
-LLM decision 含 songs[ ] 但无 tool_calls:
-  → _ensure_tool_calls 安全网：注入 play_music 工具调用
-  → LLM 下一轮收到搜索结果再输出真实 song_id
+队列同步：
+  每次 music.play → emit_response 发 music.update_playlist
+  → 前端 QueuePanel 显示完整"接下来播放"列表
 ```
 
-### 关键设计决策
+### 关键设计
 
 | # | 决策 | 理由 |
 |---|------|------|
-| ① | RuntimeDJState.playlist_queue 作唯一真相源 | 长寿 in-memory，不受 graph invoke 生命周期限制 |
-| ② | player_mirror.json 存 playlist_queue 副本 | Electron Mirror 同步用；Node 写入口统一经 `update_player_event(playlist_changed)` |
-| ③ | Queue 消费 = 前端驱动 | action_planner 只决定"播什么"，前端收到 `music.play` 后播完发 `play_end` 触发下一首 |
-| ④ | _ensure_tool_calls 是代码安全网，非 prompt 替代 | prompt 先从根源教 LLM 用工具，安全网兜底 LLM 不听话的情况 |
-| ⑤ | 失败歌曲不阻塞队列 | `_pop_failed_from_queue` 移除失效项 + REPLAN，不会死循环重试同一首 |
-
-### 已知剩余问题
-
-| # | 问题 | 原因 | 状态 |
-|---|------|------|------|
-| ① | 前端自动播放策略：WS 重连后第二首歌需用户点击 | 浏览器限制 `audio.play()` | 已加 click 恢复，待验证 |
-| ② | 真实 TTS/ASR | mock→真实 | P2 |
-| ③ | feedback_writer 拆分 / resume handler | 架构细化 | P2 |
+| ① | `play_start` 触发 DJ_MONOLOGUE，不依赖 song_progress | 前端每切歌必发 play_start，实时性远高于 30s 心跳 |
+| ② | `play_start` 先更新 RDS 再推 DJ_MONOLOGUE | 保证 dj_host 读到最新 current_song，context 不 stale |
+| ③ | 移除"介绍下一首" prompt 指令 | 用户期望 DJ 介绍当前正在播的歌，不是下一首 |
+| ④ | `music.update_playlist` 随 `music.play` 发送 | 无需额外事件驱动，前端队列始终与后端同步 |

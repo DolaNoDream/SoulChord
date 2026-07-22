@@ -36,6 +36,12 @@ DEFAULT_RUNTIME_DJ_STATE: dict = {
     "interaction_level": "low",
     # 待执行动作（in-memory only）
     "pending_actions": [],
+    # DJ 话术追踪（in-memory only）
+    "last_dj_speech_at_ms": 0,
+    "last_dj_speech_song_id": "",
+    "dj_speech_suppressed": False,
+    # ★ P0-2: 用户中断标记 — chat_send 入队时设置，play_end 消费后清除
+    "pending_user_interrupt": False,
     # 元数据
     "updated_at_ms": 0,
     "updated_by": "system",

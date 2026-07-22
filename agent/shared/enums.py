@@ -7,7 +7,7 @@ from enum import Enum
 
 
 class TriggerType(str, Enum):
-    """★ v0.1.2 P1-6：7 个枚举，user_text + voice_text 合并为 conversation。"""
+    """★ v0.1.2 P1-6：8 个枚举，user_text + voice_text 合并为 conversation。"""
     SYSTEM_INIT = "system_init"
     CONVERSATION = "conversation"
     PLAYER_EVENT = "player_event"
@@ -15,6 +15,7 @@ class TriggerType(str, Enum):
     REPLAN_EVENT = "replan_event"
     SYSTEM = "system"
     USER_CONTROL = "user_control"
+    DJ_MONOLOGUE = "dj_monologue"
 
 
 class EventPriority(int, Enum):
@@ -44,6 +45,9 @@ class EventType(str, Enum):
     PLAYER_USER_LIKE = "player_user_like"
     PLAYER_USER_DISLIKE = "player_user_dislike"
     PLAYER_PLAY_END = "player_play_end"
+
+    # DJ 话术
+    DJ_MONOLOGUE = "dj_monologue"
 
     # 定时事件
     TIMER_FEISHU = "timer_feishu"
@@ -96,9 +100,10 @@ class PlayerEventSubtype(str, Enum):
 
 
 class WsMessageType(str, Enum):
-    """前端↔Agent WS 5 type。"""
+    """前端↔Agent WS 6 type。"""
     CHAT = "chat"
     MUSIC = "music"
     STATUS = "status"
     ERROR = "error"
     HEARTBEAT = "heartbeat"
+    DJ = "dj"

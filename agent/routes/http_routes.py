@@ -3,15 +3,17 @@
 所有数据读写经 Store 层，不直接 open json。
 """
 
+import os
 import time
 from typing import Optional
 
 import httpx
 from fastapi import FastAPI, Body, HTTPException, Query
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, FileResponse
 from pydantic import BaseModel
 
 from agent.state import memory_store, player_state, program_state, settings_store, playlist_store
+from agent.state.state_manager import state_manager
 from agent.shared.enums import InitMode
 from agent.config import settings as config_settings
 
@@ -35,7 +37,6 @@ MUSIC_API_BASE = "http://localhost:8081"
 
 class SettingsUpdate(BaseModel):
     llm_apikey: Optional[str] = None
-    netease_apikey: Optional[str] = None
 
 
 class UserBaseInfoUpdate(BaseModel):
@@ -54,9 +55,25 @@ class PlaylistImportRequest(BaseModel):
     playlist_url: str
 
 
+class NeteasePlaylistImportRequest(BaseModel):
+    netease_id: int
+
+
 class PlaylistUpdateRequest(BaseModel):
     name: Optional[str] = None
     remark: Optional[str] = None
+
+
+class PlaylistCreateRequest(BaseModel):
+    name: str
+
+
+class AddSongRequest(BaseModel):
+    song: dict  # {id, name, artists, album, cover_url, duration_ms, fee}
+
+
+class SyncQueueRequest(BaseModel):
+    songs: list
 
 
 class QrCheckRequest(BaseModel):
@@ -174,7 +191,6 @@ def register_http_routes(app: FastAPI):
             },
             "settings": {
                 "llm_apikey": _resolve_llm_key(settings.get("llm_apikey", "")),
-                "netease_apikey": settings.get("netease_apikey", ""),
             },
             "netease": netease_status,
             "user_profile": profile,
@@ -206,8 +222,6 @@ def register_http_routes(app: FastAPI):
         updates = {}
         if body.llm_apikey is not None:
             updates["llm_apikey"] = body.llm_apikey
-        if body.netease_apikey is not None:
-            updates["netease_apikey"] = body.netease_apikey
         updated = settings_store.update(**updates)
         return ok(updated)
 
@@ -243,7 +257,9 @@ def register_http_routes(app: FastAPI):
         pl = playlist_store.get(playlist_id)
         if pl is None:
             return fail(1003, "歌单不存在")
-        return ok(pl)
+        # 从 songs 字典加载歌曲列表
+        songs_data = playlist_store.load_songs(playlist_id)
+        return ok({"playlist": pl, "songs": songs_data})
 
     @app.put("/api/playlist/{playlist_id}")
     async def playlist_update(playlist_id: str, body: PlaylistUpdateRequest):
@@ -257,11 +273,33 @@ def register_http_routes(app: FastAPI):
             return fail(1003, "歌单不存在")
         return ok(pl)
 
+    @app.post("/api/playlist/create")
+    async def playlist_create(body: PlaylistCreateRequest):
+        """新建一个空歌单。"""
+        pl = playlist_store.add({"name": body.name, "songs": [], "source_url": "", "remark": "用户创建"})
+        return ok(pl)
+
+    @app.post("/api/playlist/{playlist_id}/songs")
+    async def playlist_add_song(playlist_id: str, body: AddSongRequest):
+        """向指定歌单添加一首歌。"""
+        # 检查歌单是否存在
+        pl = playlist_store.get(playlist_id)
+        if pl is None:
+            return fail(1003, "歌单不存在")
+        ok_ = playlist_store.add_song(playlist_id, body.song)
+        if not ok_:
+            return fail(9999, "添加歌曲失败")
+        return ok({"playlist_id": playlist_id, "song": body.song})
+
     @app.delete("/api/playlist/{playlist_id}")
     async def playlist_delete(playlist_id: str):
-        ok_ = playlist_store.delete(playlist_id)
-        if not ok_:
+        # 保护网易云导入的歌单不被删除
+        pl = playlist_store.get(playlist_id)
+        if pl is None:
             return fail(1003, "歌单不存在")
+        if pl.get("netease_id"):
+            return fail(1002, "网易云导入的歌单不可删除，请在网易云客户端操作")
+        ok_ = playlist_store.delete(playlist_id)
         return ok()
 
     @app.post("/api/playlist/import")
@@ -270,6 +308,54 @@ def register_http_routes(app: FastAPI):
             return fail(1001, "playlist_url 不能为空")
         pl = playlist_store.import_from_url(body.playlist_url)
         return ok(pl)
+
+    @app.post("/api/playlist/play")
+    async def playlist_play_song(body: dict = Body(...)):
+        """从歌单播放指定歌曲。获取播放 URL 并返回给前端。"""
+        import urllib.parse
+        song_id = body.get("id", "")
+        if not song_id:
+            return fail(1001, "song_id 不能为空")
+
+        result = await _call_music_api("GET", f"/api/v1/songs/{song_id}/playurl")
+        if not result or result.get("code") != 0:
+            msg = result.get("msg", "获取播放地址失败") if result else "网易云服务不可用"
+            return fail(3002, msg)
+
+        raw_url = result.get("data", {}).get("url")
+        if not raw_url:
+            return fail(3002, "无法获取歌曲播放地址")
+
+        encoded = urllib.parse.quote(raw_url, safe="")
+        proxy_url = f"http://localhost:{config_settings.AGENT_PORT}/api/proxy/audio?url={encoded}"
+
+        # 回传歌曲数据，供前端直接播放
+        song = {
+            "id": body.get("id", ""),
+            "name": body.get("name", ""),
+            "artists": body.get("artists", []),
+            "album": body.get("album", {}),
+            "cover_url": body.get("cover_url", ""),
+            "duration_ms": body.get("duration_ms", 0),
+            "fee": body.get("fee", 0),
+        }
+        return ok({"play_url": proxy_url, "song": song})
+
+    @app.post("/api/playlist/sync-queue")
+    async def playlist_sync_queue(body: SyncQueueRequest):
+        """同步前端歌单队列到后端（歌单歌曲播放时调用）。
+
+        更新 RuntimeDJState.playlist_queue + player_mirror.json，
+        使播放列表面板显示正确、next/prev 在歌单内切换而不触发 REPLAN。
+        """
+        state_manager.runtime_dj_state["playlist_queue"] = body.songs
+        state_manager.runtime_dj_state["queue_strategy"] = {"source": "playlist"}
+        player_state.update_player_event({
+            "subtype": "playlist_changed",
+            "playlist": body.songs,
+            "strategy": {"source": "playlist"},
+        })
+        return ok()
 
     # ── 5. user ──
 
@@ -480,6 +566,36 @@ def register_http_routes(app: FastAPI):
             return ok(result.get("data", {}))
         return fail(3002, result.get("msg", "检查 QR 码状态失败") if result else "网易云服务不可用")
 
+    @app.get("/api/netease/playlists")
+    async def netease_playlists():
+        """获取当前登录用户的网易云歌单列表。"""
+        result = await _call_music_api("GET", "/api/v1/user/playlists")
+        if result and result.get("code") == 0:
+            return ok(result.get("data", {}))
+        # 透传实际错误码和信息，方便前端调试
+        code = result.get("code", 3002) if result else 3002
+        msg = result.get("msg", "网易云服务不可用") if result else "网易云服务不可用"
+        return fail(code, msg)
+
+    @app.post("/api/netease/playlist/import")
+    async def netease_playlist_import(body: NeteasePlaylistImportRequest):
+        """从网易云账号导入歌单（拉取详情 + 写入本地 playlists.json）。"""
+        if not body.netease_id:
+            return fail(1001, "netease_id 不能为空")
+        result = await _call_music_api("GET", "/api/v1/playlist/detail", {"id": str(body.netease_id)})
+        if not result or result.get("code") != 0:
+            msg = result.get("msg", "获取歌单详情失败") if result else "网易云服务不可用"
+            return fail(3002, msg)
+        data = result.get("data", {})
+        pl = playlist_store.import_from_netease(
+            netease_id=body.netease_id,
+            name=data.get("name", "未命名歌单"),
+            songs=data.get("songs", []),
+            cover_url=data.get("cover_url", ""),
+            description=data.get("description", ""),
+        )
+        return ok(pl)
+
     # ── 10. proxy ──
 
     @app.get("/api/proxy/audio")
@@ -506,6 +622,8 @@ def register_http_routes(app: FastAPI):
                     resp.aiter_bytes(),
                     media_type=content_type,
                     headers={
+                        "Access-Control-Allow-Origin": "*",
+                        "Access-Control-Allow-Headers": "*",
                         "Accept-Ranges": "bytes",
                         "Cache-Control": "public, max-age=3600",
                     },
@@ -516,7 +634,29 @@ def register_http_routes(app: FastAPI):
             return fail(3002, "音频获取失败: 网络错误")
 
 
-    # ── 11. feishu ──
+    # ── 11. TTS audio serving ──
+
+    @app.get("/api/tts/audio/{filename}")
+    async def serve_tts_audio(filename: str):
+        """提供 TTS 合成的音频文件。
+
+        从 data/tts/ 目录读取并返回 MP3 文件。
+        路径穿越防护：禁止 .. 和 /。
+        """
+        # 路径穿越防护
+        if ".." in filename or "/" in filename or "\\" in filename:
+            return fail(1001, "invalid filename")
+        filepath = os.path.join(config_settings.DATA_DIR, "tts", filename)
+        if not os.path.isfile(filepath):
+            logger = __import__("logging").getLogger(__name__)
+            logger.warning("TTS audio not found: %s", filepath)
+            return fail(1003, "音频文件不存在")
+        content_type = "audio/mpeg" if filename.endswith(".mp3") else "audio/wav"
+        return FileResponse(filepath, media_type=content_type,
+                            headers={"Access-Control-Allow-Origin": "*",
+                                     "Access-Control-Allow-Headers": "*"})
+
+    # ── 12. feishu ──
 
     @app.get("/api/feishu/status")
     async def feishu_status():

@@ -18,8 +18,10 @@ INIT_PROMPT = """你是 SoulChord AI DJ。用户首次打开 App 或新的一天
 
 【初始播放列表要求】
 - 基于用户画像选择 10 首匹配场景的歌
-- 第 1 首作为 first_song 立即播放
-- 每首歌需包含 song_id（填空字符串 ""，系统会自动解析真实 ID）、name、artist、scene_match
+- **多样性要求：不同歌手至少 6 位以上，同一艺术家的歌曲最多 2 首**
+- 风格多样化（如已选一首安静的歌，下一首选不同节奏的）
+- 第 1 首作为初始歌曲立即播放
+- 每首歌包含 name、artist、scene_match（不要生成 song_id，song_id 由系统通过 play_music 工具搜索自动解析）
 
 【输出格式】JSON（严格遵循此 schema）：
 {{
@@ -34,9 +36,8 @@ INIT_PROMPT = """你是 SoulChord AI DJ。用户首次打开 App 或新的一天
     "speak_frequency": "（low / medium / high）"
   }},
   "initial_playlist": [
-    {{"song_id": "...", "name": "...", "artist": "...", "scene_match": "..."}}
+    {{"name": "...", "artist": "...", "scene_match": "..."}}
   ],
-  "first_song_id": "...",
   "welcome_text": "（个性化欢迎语，含今日天气/场景/节目主题）"
 }}
 """

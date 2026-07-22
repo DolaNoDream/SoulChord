@@ -32,6 +32,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from agent.routes.http_routes import register_http_routes
 from agent.state import settings_store, playlist_store, memory_store, player_state
+from agent.state.state_manager import state_manager
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -58,6 +59,11 @@ def tmp_data_dir(monkeypatch, tmp_path):
 def client(tmp_data_dir):
     """使用临时目录的 HTTP 测试客户端。"""
     app = FastAPI()
+    # 注入 RuntimeDJState 供 /api/playlist/sync-queue 使用
+    state_manager.runtime_dj_state = {
+        "playlist_queue": [],
+        "queue_strategy": {},
+    }
     register_http_routes(app)
     return TestClient(app)
 
@@ -145,7 +151,6 @@ class TestInit:
         resp = client.get("/api/init")
         s = resp.json()["data"]["settings"]
         assert isinstance(s["llm_apikey"], str)  # 可能是空或 .env 配置值
-        assert isinstance(s["netease_apikey"], str)
 
     def test_init_netease_mock(self, client):
         resp = client.get("/api/init")
@@ -177,29 +182,25 @@ class TestSettings:
         assert resp.status_code == 200
         data = resp.json()["data"]
         assert isinstance(data["llm_apikey"], str)
-        assert isinstance(data["netease_apikey"], str)
 
     def test_put_settings_updates(self, client, tmp_data_dir):
         resp = client.put("/api/settings", json={
             "llm_apikey": "sk-test",
-            "netease_apikey": "netease-test",
         })
         assert resp.status_code == 200
         data = resp.json()["data"]
         assert data["llm_apikey"] == "sk-test"
-        assert data["netease_apikey"] == "netease-test"
 
         # 验证持久化
         saved = _read_json(os.path.join(tmp_data_dir, "settings.json"))
         assert saved["llm_apikey"] == "sk-test"
 
     def test_put_settings_partial(self, client):
-        """只更新 llm_apikey，netease_apikey 不变。"""
-        client.put("/api/settings", json={"llm_apikey": "sk-a", "netease_apikey": "sk-b"})
+        """只更新 llm_apikey。"""
+        client.put("/api/settings", json={"llm_apikey": "sk-a"})
         resp = client.put("/api/settings", json={"llm_apikey": "sk-c"})
         data = resp.json()["data"]
         assert data["llm_apikey"] == "sk-c"
-        assert data["netease_apikey"] == "sk-b"
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -232,7 +233,8 @@ class TestPlaylist:
 
         resp = client.get(f"/api/playlist/{created['playlist_id']}")
         assert resp.status_code == 200
-        assert resp.json()["data"]["playlist_id"] == created["playlist_id"]
+        data = resp.json()["data"]
+        assert data["playlist"]["playlist_id"] == created["playlist_id"]
 
     def test_get_playlist_not_found(self, client):
         resp = client.get("/api/playlist/nonexistent")
@@ -287,6 +289,31 @@ class TestPlaylist:
     def test_import_empty_url_fails(self, client):
         resp = client.post("/api/playlist/import", json={"playlist_url": ""})
         assert resp.json()["code"] == 1001
+
+    def test_sync_queue_updates_backend(self, client, tmp_data_dir):
+        """POST /api/playlist/sync-queue 应更新 RuntimeDJState 和 player_mirror.json。"""
+        songs = [
+            {"id": "1", "name": "Song A", "artists": [{"id": "a1", "name": "Artist A"}]},
+            {"id": "2", "name": "Song B", "artists": [{"id": "b1", "name": "Artist B"}]},
+        ]
+        resp = client.post("/api/playlist/sync-queue", json={"songs": songs})
+        assert resp.status_code == 200
+        assert resp.json()["code"] == 0
+
+        # 确认 RuntimeDJState 已更新
+        assert state_manager.runtime_dj_state["playlist_queue"] == songs
+        assert state_manager.runtime_dj_state["queue_strategy"] == {"source": "playlist"}
+
+        # 确认 player_mirror.json 已更新
+        mirror = player_state.load_player_mirror()
+        assert mirror["playlist_queue"] == songs
+
+    def test_sync_queue_empty(self, client, tmp_data_dir):
+        """POST /api/playlist/sync-queue 接受空列表。"""
+        resp = client.post("/api/playlist/sync-queue", json={"songs": []})
+        assert resp.status_code == 200
+        assert resp.json()["code"] == 0
+        assert state_manager.runtime_dj_state["playlist_queue"] == []
 
 
 # ═══════════════════════════════════════════════════════════════

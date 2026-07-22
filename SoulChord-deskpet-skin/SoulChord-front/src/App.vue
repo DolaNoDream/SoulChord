@@ -6,9 +6,8 @@ import { usePlaylistStore } from '@/stores/playlist'
 import { usePlayerStore } from '@/stores/player'
 import { useElectron } from '@/composables/useElectron'
 import { fetchInit } from '@/api/agent'
-import MiniWindow from '@/components/MiniWindow.vue'
 import SettingsDrawer from '@/components/SettingsDrawer.vue'
-import HistoryPanel from '@/components/HistoryPanel.vue'
+import DotGrid from '@/components/DotGrid.vue'
 
 const settingsStore = useSettingsStore()
 const userStore = useUserStore()
@@ -16,9 +15,27 @@ const playlistStore = usePlaylistStore()
 const playerStore = usePlayerStore()
 const { minimize, maximize, close, isMaximized, isElectron: isInElectron } = useElectron()
 const showDrawer = ref(false)
-const showHistory = ref(false)
 const initDone = ref(false)
 provide('initDone', readonly(initDone))
+
+// ── 日夜主题 ──
+const isDark = ref(true)
+
+function toggleTheme() {
+  isDark.value = !isDark.value
+  document.documentElement.classList.toggle('theme-light', !isDark.value)
+  localStorage.setItem('soulchord-theme', isDark.value ? 'dark' : 'light')
+}
+
+// 启动时恢复主题偏好
+function restoreTheme() {
+  const saved = localStorage.getItem('soulchord-theme')
+  if (saved === 'light') {
+    isDark.value = false
+    document.documentElement.classList.add('theme-light')
+  }
+}
+restoreTheme()
 
 // 启动：连接后端 → 加载用户画像 + 拉取后端设置 + 歌单列表
 onMounted(async () => {
@@ -57,21 +74,28 @@ onMounted(async () => {
 </script>
 
 <template>
-  <MiniWindow v-if="isInElectron && false" />
-
-  <div v-else class="app">
+  <DotGrid />
+  <div class="app">
     <header class="app__titlebar" :class="{ 'drag-region': isInElectron }">
-      <button class="app__history-btn no-drag" @click="showHistory = !showHistory" title="播放列表">
-        {{ showHistory ? '📜' : '📋' }}
-      </button>
-      <div class="app__titlebar-title">SoulChord</div>
-      <div v-if="isInElectron" class="app__titlebar-controls no-drag">
-        <button class="app__titlebar-btn" title="最小化" @click="minimize">─</button>
-        <button class="app__titlebar-btn" :title="isMaximized ? '还原' : '最大化'" @click="maximize">
-          <span v-if="isMaximized" class="app__icon app__icon--restore"></span>
-          <span v-else class="app__icon app__icon--maximize"></span>
-        </button>
-        <button class="app__titlebar-btn app__titlebar-btn--close" title="关闭" @click="close">✕</button>
+      <div class="app__titlebar-left">
+        <span class="app__status-dot"></span>
+        <span class="app__titlebar-title">SoulChord</span>
+      </div>
+      <div class="app__titlebar-right">
+        <div class="app__onair">
+          <span class="app__onair-dot"></span>
+          <span class="app__onair-text">ON AIR</span>
+        </div>
+        <button class="app__titlebar-btn app__theme-btn no-drag" :title="isDark ? '切换到白天' : '切换到黑夜'" @click="toggleTheme">{{ isDark ? '☾' : '☀' }}</button>
+        <button class="app__titlebar-btn app__settings-btn no-drag" title="个人设置" @click="showDrawer = true">⚙</button>
+        <div v-if="isInElectron" class="app__titlebar-controls no-drag">
+          <button class="app__titlebar-btn" title="最小化" @click="minimize">─</button>
+          <button class="app__titlebar-btn" :title="isMaximized ? '还原' : '最大化'" @click="maximize">
+            <span v-if="isMaximized" class="app__icon app__icon--restore"></span>
+            <span v-else class="app__icon app__icon--maximize"></span>
+          </button>
+          <button class="app__titlebar-btn app__titlebar-btn--close" title="关闭" @click="close">✕</button>
+        </div>
       </div>
     </header>
 
@@ -83,32 +107,45 @@ onMounted(async () => {
       </router-view>
     </main>
 
-    <button class="app__avatar-btn" @click="showDrawer = true" title="个人设置">
-      <img v-if="userStore.getLocalAvatar()" :src="userStore.getLocalAvatar()" class="app__avatar-btn-img" />
-      <span v-else>👤</span>
-    </button>
-
     <SettingsDrawer :visible="showDrawer" @close="showDrawer = false" />
-    <HistoryPanel :visible="showHistory" @close="showHistory = false" />
   </div>
 </template>
 
 <style lang="scss">
 .app {
-  display: flex; flex-direction: column; width: 100%; height: 100%; background: $bg-primary; color: $text-primary; position: relative;
-  &__titlebar { display: flex; justify-content: space-between; align-items: center; height: 32px; padding: 0 8px; background: $bg-secondary; border-bottom: 1px solid $border-subtle; flex-shrink: 0;
-    &-title { font-size: $font-size-xs; color: $text-muted; padding-left: 8px; }
-    &-controls { display: flex; gap: 4px; }
-    &-btn { width: 28px; height: 22px; display: flex; align-items: center; justify-content: center; background: none; border: none; color: $text-secondary; font-size: 12px; cursor: pointer; border-radius: 4px;
-      &:hover { background: $bg-glass-hover; color: $text-primary; }
+  display: flex; flex-direction: column; width: 100%; height: 100%; background: transparent; color: var(--text-primary); position: relative; z-index: 1; transition: color 0.3s ease;
+
+  &__titlebar { display: flex; justify-content: space-between; align-items: center; height: 32px; padding: 0 10px; background: var(--bg-glass); border-bottom: 1px solid var(--border-subtle); flex-shrink: 0;
+    &-left, &-right { display: flex; align-items: center; gap: 8px; }
+    &-right { gap: 4px; }
+    &-title { font-family: $font-mono; font-size: $font-size-sm; font-weight: 500; color: var(--text-primary); letter-spacing: 0.5px; padding-left: 4px; }
+    &-btn { width: 28px; height: 22px; display: flex; align-items: center; justify-content: center; background: none; border: none; color: var(--text-secondary); font-size: 12px; cursor: pointer; border-radius: 4px;
+      &:hover { background: var(--bg-glass-hover); color: var(--text-primary); }
       &--close:hover { background: #ef4444; color: #fff; }
     }
   }
-  &__main { flex: 1; overflow: hidden; }
-  &__avatar-btn { position: absolute; top: 40px; right: 12px; width: 36px; height: 36px; display: flex; align-items: center; justify-content: center; background: $bg-glass; border: 1px solid $border-subtle; border-radius: 50%; cursor: pointer; font-size: 18px; z-index: 10; transition: all 0.2s; padding: 0;
-    &:hover { border-color: $accent-primary; transform: scale(1.08); box-shadow: 0 0 12px rgba($accent-primary, 0.2); }
-    &-img { width: 100%; height: 100%; object-fit: cover; border-radius: 50%; }
+
+  /* ── 状态圆点 ── */
+  &__status-dot { width: 6px; height: 6px; border-radius: 50%; background: $accent-primary; box-shadow: 0 0 6px rgba($accent-primary, 0.6); animation: pulse 2s infinite; flex-shrink: 0; }
+
+  /* ── ON AIR ── */
+  &__onair { display: flex; align-items: center; gap: 5px; padding: 2px 8px; border: 1px solid rgba($accent-primary, 0.3); border-radius: $radius-full;
+    &-dot { width: 5px; height: 5px; border-radius: 50%; background: $accent-primary; animation: pulse 2s infinite; flex-shrink: 0; }
+    &-text { font-family: $font-mono; font-size: 9px; font-weight: 500; color: $accent-primary; letter-spacing: 1.5px; text-transform: uppercase; }
   }
+
+  /* ── 设置齿轮 ── */
+  &__settings-btn { font-size: 14px; padding: 0 4px; opacity: 0.5;
+    &:hover { opacity: 1; }
+  }
+
+  /* ── 主题切换 ── */
+  &__theme-btn { font-size: 13px; padding: 0 4px; opacity: 0.5;
+    &:hover { opacity: 1; }
+  }
+
+  &__main { flex: 1; overflow: hidden; }
+
   &__icon { display: inline-block; width: 10px; height: 10px; position: relative;
     &--maximize { border: 1.5px solid currentColor; border-radius: 1px; }
     &--restore { &::before { content: ''; position: absolute; top: 2px; left: 0; width: 6px; height: 6px; border: 1.5px solid currentColor; border-radius: 1px; background: $bg-secondary; z-index: 1; }

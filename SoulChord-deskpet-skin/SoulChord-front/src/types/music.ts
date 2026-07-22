@@ -30,6 +30,8 @@ export interface Playlist {
   source_url: string         // 原始网易云分享链接
   song_count: number         // 歌单歌曲总数
   created_at: number         // 导入时间戳
+  netease_id?: number        // 网易云歌单 ID（有值表示是网易云导入的）
+  remark?: string            // 备注
 }
 
 /** 歌曲反馈（对齐文档 4.4 SongFeedback 结构） */

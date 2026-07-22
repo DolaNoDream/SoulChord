@@ -19,7 +19,6 @@ const nameInputRef = ref<HTMLInputElement | null>(null)
 
 // ===== API Key 显示切换 =====
 const showLlmKey = ref(false)
-const showNeteaseKey = ref(false)
 
 // ===== 网易云登录 =====
 const loginDialogVisible = ref(false)
@@ -59,13 +58,35 @@ watch(() => props.visible, async (v) => {
 
 // ===== 头像 =====
 function handleAvatarClick() { avatarInputRef.value?.click() }
+function compressAvatar(file: File, maxW: number, quality: number): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => {
+      const img = new Image()
+      img.onload = () => {
+        const canvas = document.createElement('canvas')
+        let w = img.width, h = img.height
+        if (w > maxW) { h = h * maxW / w; w = maxW }
+        if (h > maxW) { w = w * maxW / h; h = maxW }
+        canvas.width = w; canvas.height = h
+        const ctx = canvas.getContext('2d')!
+        ctx.drawImage(img, 0, 0, w, h)
+        resolve(canvas.toDataURL('image/jpeg', quality))
+      }
+      img.onerror = reject
+      img.src = reader.result as string
+    }
+    reader.onerror = reject
+    reader.readAsDataURL(file)
+  })
+}
 function handleAvatarChange(e: Event) {
   const input = e.target as HTMLInputElement
   const file = input.files?.[0]
   if (!file || !file.type.startsWith('image/') || file.size > 5 * 1024 * 1024) return
-  const reader = new FileReader()
-  reader.onload = () => { userStore.updateAvatar(reader.result as string) }
-  reader.readAsDataURL(file)
+  compressAvatar(file, 120, 0.7).then(dataUrl => {
+    userStore.updateAvatar(dataUrl)
+  }).catch(() => {})
   input.value = ''
 }
 
@@ -85,14 +106,42 @@ function handleNameKeydown(e: KeyboardEvent) {
   else if (e.key === 'Escape') isEditingName.value = false
 }
 
+// ===== DJ 头像/名字 =====
+const djAvatarInputRef = ref<HTMLInputElement | null>(null)
+const isEditingDjName = ref(false)
+const editingDjName = ref('')
+const djNameInputRef = ref<HTMLInputElement | null>(null)
+
+function handleDjAvatarClick() { djAvatarInputRef.value?.click() }
+function handleDjAvatarChange(e: Event) {
+  const input = e.target as HTMLInputElement
+  const file = input.files?.[0]
+  if (!file || !file.type.startsWith('image/') || file.size > 5 * 1024 * 1024) return
+  compressAvatar(file, 120, 0.7).then(dataUrl => {
+    userStore.updateDjAvatar(dataUrl)
+  }).catch(() => {})
+  input.value = ''
+}
+
+function startEditDjName() {
+  editingDjName.value = userStore.djName
+  isEditingDjName.value = true
+  setTimeout(() => djNameInputRef.value?.focus(), 100)
+}
+function confirmEditDjName() {
+  const n = editingDjName.value.trim()
+  if (n) userStore.updateDjName(n)
+  isEditingDjName.value = false
+}
+function handleDjNameKeydown(e: KeyboardEvent) {
+  if (e.key === 'Enter') confirmEditDjName()
+  else if (e.key === 'Escape') isEditingDjName.value = false
+}
+
 // ===== API Key 保存 =====
 function handleLlmKeyBlur() {
   if (settingsStore.llmApiKey) settingsStore.syncToBackend()
 }
-function handleNeteaseKeyBlur() {
-  if (settingsStore.neteaseApiKey) settingsStore.syncToBackend()
-}
-
 function openDeepSeekPage() {
   const url = 'https://platform.deepseek.com/api_keys'
   if (window.electronAPI?.openExternal) window.electronAPI.openExternal(url)
@@ -186,7 +235,7 @@ onUnmounted(() => {
       <!-- 用户信息 -->
       <div class="settings-drawer__user">
         <div class="settings-drawer__avatar" @click="handleAvatarClick" title="点击更换头像">
-          <img v-if="userStore.getLocalAvatar()" :src="userStore.getLocalAvatar()" class="settings-drawer__avatar-img" />
+          <img v-if="userStore.localAvatar" :src="userStore.localAvatar" class="settings-drawer__avatar-img" />
           <span v-else>👤</span>
           <div class="settings-drawer__avatar-overlay">📷</div>
         </div>
@@ -200,6 +249,29 @@ onUnmounted(() => {
             <span class="settings-drawer__edit-icon">✎</span>
           </div>
         </div>
+      </div>
+
+      <!-- DJ 信息 -->
+      <div class="settings-drawer__section">
+        <h4 class="settings-drawer__section-title">🎙️ AI DJ 形象</h4>
+        <div class="settings-drawer__dj-row">
+          <div class="settings-drawer__avatar" @click="handleDjAvatarClick" title="点击更换 DJ 头像">
+            <img v-if="userStore.djAvatar" :src="userStore.djAvatar" class="settings-drawer__avatar-img" />
+            <span v-else>🎧</span>
+            <div class="settings-drawer__avatar-overlay">📷</div>
+          </div>
+          <input ref="djAvatarInputRef" type="file" accept="image/*" class="settings-drawer__file-input" @change="handleDjAvatarChange" />
+          <div class="settings-drawer__user-info">
+            <div v-if="isEditingDjName" class="settings-drawer__name-edit">
+              <input ref="djNameInputRef" v-model="editingDjName" class="settings-drawer__name-input" maxlength="20" @keydown="handleDjNameKeydown" @blur="confirmEditDjName" />
+            </div>
+            <div v-else class="settings-drawer__name-display" @click="startEditDjName" title="点击修改 DJ 名字">
+              <span class="settings-drawer__nickname">{{ userStore.djName }}</span>
+              <span class="settings-drawer__edit-icon">✎</span>
+            </div>
+          </div>
+        </div>
+        <p class="settings-drawer__item-desc" style="margin-top: 8px;">DJ 头像和名字会显示在对话气泡中</p>
       </div>
 
       <!-- 窗口设置 -->
@@ -230,25 +302,6 @@ onUnmounted(() => {
           <button class="settings-drawer__apikey-toggle" @click="showLlmKey = !showLlmKey">{{ showLlmKey ? '🙈' : '👁' }}</button>
         </div>
         <p v-if="!settingsStore.hasLlmKey" class="settings-drawer__warn">⚠️ 未配置LLM APIKey，AI对话与歌单画像分析将不可用</p>
-      </div>
-
-      <!-- 网易云 API Key -->
-      <div class="settings-drawer__section">
-        <h4 class="settings-drawer__section-title">🎵 网易云 API Key</h4>
-        <p class="settings-drawer__item-desc" style="margin-bottom: 8px;">
-          配置网易云第三方服务密钥以启用歌单导入与音乐播放
-        </p>
-        <div class="settings-drawer__apikey-row">
-          <input
-            :value="settingsStore.neteaseApiKey"
-            :type="showNeteaseKey ? 'text' : 'password'"
-            class="settings-drawer__apikey-input"
-            placeholder="输入网易云API密钥"
-            @input="settingsStore.neteaseApiKey = ($event.target as HTMLInputElement).value"
-            @blur="handleNeteaseKeyBlur"
-          />
-          <button class="settings-drawer__apikey-toggle" @click="showNeteaseKey = !showNeteaseKey">{{ showNeteaseKey ? '🙈' : '👁' }}</button>
-        </div>
       </div>
 
       <!-- 网易云账号登录 -->
@@ -339,6 +392,7 @@ onUnmounted(() => {
   }
   &__file-input { display: none; }
   &__user-info { display: flex; flex-direction: column; gap: 2px; }
+  &__dj-row { display: flex; align-items: center; gap: 12px; }
   &__nickname { font-size: $font-size-base; color: $text-primary; font-weight: 600; }
   &__name-display { display: flex; align-items: center; gap: 6px; cursor: pointer; padding: 2px 4px;
     border-radius: 4px;

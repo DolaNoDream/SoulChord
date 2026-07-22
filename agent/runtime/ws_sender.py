@@ -108,16 +108,46 @@ def build_music_play(song: dict, play_url: str, **kwargs) -> dict:
     }
 
 
+def build_music_update_playlist(queue: list, current_index: int = 0) -> dict:
+    """music.update_playlist — 同步播放队列到前端。"""
+    songs = [_queue_song_to_frontend(s) for s in queue]
+    return {
+        "type": "music",
+        "subtype": "update_playlist",
+        "ts": _now_ms(),
+        "payload": {"songs": songs, "current_index": current_index},
+    }
+
+
+def _queue_song_to_frontend(raw: dict) -> dict:
+    """将 playlist_queue 格式转为前端 Song 格式。"""
+    return {
+        "id": raw.get("song_id") or raw.get("id", ""),
+        "name": raw.get("name", "未知歌曲"),
+        "artists": raw.get("artists") or (
+            [{"id": "", "name": raw["artist"]}] if raw.get("artist") else []
+        ),
+        "album": raw.get("album") if isinstance(raw.get("album"), dict) else {
+            "id": "", "name": raw.get("album", ""),
+        },
+        "cover_url": raw.get("cover_url", ""),
+        "duration_ms": raw.get("duration_ms", 0),
+        "fee": raw.get("fee", 0),
+    }
+
+
 def build_tts_synthesize(text: str, **extra) -> dict:
     """tts.synthesize — DJ 语音合成。"""
+    audio_url = extra.pop("audio_url", "")
+    audio_duration_ms = extra.pop("audio_duration_ms", 0)
     return {
         "type": "tts",
         "subtype": "synthesize",
         "ts": _now_ms(),
         "payload": {
             "text": text,
-            "audio_url": "",
-            "audio_duration_ms": 0,
+            "audio_url": audio_url,
+            "audio_duration_ms": audio_duration_ms,
             "voice": extra.pop("voice", "male_gentle"),
             "expression": extra.pop("expression", "talking"),
             **extra,
@@ -135,6 +165,25 @@ def build_error(code: int, msg: str, *, recoverable: bool = True, related_id: st
             "msg": msg,
             "recoverable": recoverable,
             "related_id": related_id,
+        },
+    }
+
+
+def build_dj_speech(text: str, audio_url: str = "", duration_ms: int = 0, **extra) -> dict:
+    """dj.speech — DJ 话术消息。
+
+    类型 type="dj", subtype="speech"。
+    前端播放音频和/或显示文字。
+    """
+    return {
+        "type": "dj",
+        "subtype": "speech",
+        "ts": _now_ms(),
+        "payload": {
+            "text": text,
+            "audio_url": audio_url,
+            "audio_duration_ms": duration_ms,
+            **extra,
         },
     }
 

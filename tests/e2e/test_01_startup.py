@@ -332,11 +332,12 @@ class TestSystemInitFullChain:
                     "program_status": "running",
                 },
                 "initial_playlist": [
-                    {"song_id": str(i), "name": f"Song {i}",
-                     "artist": "Artist", "scene_match": "default"}
-                    for i in range(1, 11)
+                    {"name": "江南", "artist": "林俊杰", "scene_match": "default"},
+                    {"name": "爱错(Live)", "artist": "王力宏", "scene_match": "default"},
+                    {"name": "Happy", "artist": "Pharrell Williams", "scene_match": "default"},
+                    {"name": "特别的人", "artist": "方大同", "scene_match": "default"},
+                    {"name": "晴天", "artist": "周杰伦", "scene_match": "default"},
                 ],
-                "first_song_id": "1",
                 "welcome_text": "E2E 测试欢迎！",
             },
         }
@@ -365,8 +366,9 @@ class TestSystemInitFullChain:
 
         # music.play
         assert result.get("should_play_music") is True
-        assert pending["music_play"]["song"]["id"] == "1"
-        assert pending["music_play"]["song"]["artists"][0]["name"] == "Artist"
+        # LLM 输出 name+artist→系统匹配 real song_id，江南→108914
+        assert pending["music_play"]["song"]["id"] == "108914"
+        assert pending["music_play"]["song"]["artists"][0]["name"] == "林俊杰"
         assert pending["music_play"]["auto_play"] is True
 
         # turn_count
@@ -382,7 +384,7 @@ class TestSystemInitFullChain:
         assert len(chat_msgs) == 1
         assert chat_msgs[0]["payload"]["text"] == "E2E 测试欢迎！"
         assert len(music_msgs) == 1
-        assert music_msgs[0]["payload"]["song"]["id"] == "1"
+        assert music_msgs[0]["payload"]["song"]["id"] == "108914"
         assert len(music_msgs[0]["payload"]["song"]["artists"]) >= 1
 
     @pytest.mark.asyncio

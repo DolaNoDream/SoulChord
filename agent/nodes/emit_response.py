@@ -31,8 +31,10 @@ async def emit_response_node(state: dict) -> dict:
         enqueue_or_drop,
         build_chat_reply,
         build_music_play,
+        build_music_update_playlist,
         build_tts_synthesize,
         build_error,
+        build_dj_speech,
     )
 
     pending = state.get("pending_payload") or {}
@@ -67,16 +69,56 @@ async def emit_response_node(state: dict) -> dict:
         logger.info("[EMIT] music.play: %s (auto_play=%s)",
                      song.get("name", "?"), music_play.get("auto_play"))
 
-    # ④ transition speech → tts.synthesize
+        # ★ 同步完整队列到前端（让 QueuePanel 显示后续歌曲）
+        # ★ v9.12 fix: 用 live RDS 队列（非 snapshot），P0-3 后 action_planner 已修改 live RDS 队列
+        _rds = (state.get("dependencies") or {}).get("runtime_dj_state")
+        _q = (_rds.get("playlist_queue") if _rds else []) or []
+        if _q:
+            _idx = 0
+            _cid = song.get("id") or song.get("song_id", "")
+            for i, s in enumerate(_q):
+                if (s.get("song_id") or s.get("id", "")) == _cid:
+                    _idx = i
+                    break
+            enqueue_or_drop(build_music_update_playlist(_q, _idx))
+            logger.info("[EMIT] music.update_playlist: %d songs", len(_q))
+
+    # ④ transition speech → tts.synthesize（含实际 audio_url）
     ts = pending.get("transition_speech")
     if ts:
         text = ts.get("text", "")
         mood = ts.get("mood", "neutral")
         theme = ts.get("theme", "")
-        enqueue_or_drop(build_tts_synthesize(text, voice="warm", mood=mood, theme=theme))
-        logger.info("[EMIT] tts.synthesize: %.60s (mood=%s)", text[:60], mood)
+        audio_url = ts.get("audio_url", "")
+        audio_duration_ms = ts.get("duration_ms", 0)
+        enqueue_or_drop(build_tts_synthesize(
+            text, voice="warm", mood=mood, theme=theme,
+            audio_url=audio_url, audio_duration_ms=audio_duration_ms,
+        ))
+        log_extra = f" audio={audio_url[:40]}..." if audio_url else " no-audio"
+        logger.info("[EMIT] tts.synthesize: %.60s (mood=%s%s)",
+                    text[:60], mood, log_extra)
 
-    # ⑤ error（Phase 2-lite）
+    # ⑤ DJ speech → dj.speech（含 audio_url）
+    dj_speech = pending.get("dj_speech")
+    if dj_speech:
+        text = dj_speech.get("text", "")
+        mood = dj_speech.get("mood", "neutral")
+        # 从 transition_speech 取音频信息（action_executor 已 enrich）
+        ts = pending.get("transition_speech") or {}
+        audio_url = ts.get("audio_url", "") or ""
+        audio_duration_ms = ts.get("duration_ms", 0) or 0
+        if not audio_url:
+            logger.warning("[EMIT] dj.speech with NO audio_url (TTS likely failed), text=%.60s", text[:60])
+        else:
+            logger.info("[EMIT] dj.speech with audio_url=%.50s (text=%.40s)", audio_url, text[:40])
+        msg = build_dj_speech(text=text, mood=mood,
+                              audio_url=audio_url, duration_ms=audio_duration_ms)
+        enqueue_or_drop(msg)
+        log_extra = f" audio={audio_url[:40]}..." if audio_url else " no-audio"
+        logger.info("[EMIT] dj.speech: %.80s (mood=%s%s)", text[:80], mood, log_extra)
+
+    # ⑥ error（Phase 2-lite）
     last_error = state.get("last_error")
     if last_error:
         code_raw = last_error.get("code", 9999)

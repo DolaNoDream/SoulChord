@@ -85,6 +85,20 @@ async def lifespan(app: FastAPI):
     )
 
     # ─────────────────────────────────────────────────
+    # ❖ 第 2.8 步：initialize DJHostService
+    # ─────────────────────────────────────────────────
+    from agent.services.dj_host_service import DJHostService
+    _dj_host_service = DJHostService(
+        llm_service=_llm_service,
+        enabled=settings.dj_host.enabled,
+        cache_ttl_s=settings.dj_host.cache_ttl_s,
+        llm_timeout_s=settings.dj_host.llm_timeout_s,
+        persona_name=settings.dj_host.persona_name,
+        persona_style=settings.dj_host.persona_style,
+    )
+    logger.info("[lifespan 2.8/9] DJHostService initialized (enabled=%s)", settings.dj_host.enabled)
+
+    # ─────────────────────────────────────────────────
     # 第 3 步：warmup Memory（4 category + music_profile）
     # ─────────────────────────────────────────────────
     logger.info("[lifespan 3/9] Warmup memory")
@@ -95,6 +109,7 @@ async def lifespan(app: FastAPI):
     # ─────────────────────────────────────────────────
     logger.info("[lifespan 4/9] Load RuntimeDJState")
     _runtime_dj_state = build_runtime_dj_state_from_disk()
+    state_manager.runtime_dj_state = _runtime_dj_state
 
     # ─────────────────────────────────────────────────
     # 第 5 步：create EventQueue（已构造）+ 绑定 EventService
@@ -106,7 +121,7 @@ async def lifespan(app: FastAPI):
     # 第 6 步：start EventDispatcher（Runtime while True）
     # ─────────────────────────────────────────────────
     logger.info("[lifespan 6/9] Start EventDispatcher")
-    dispatcher = EventDispatcher(event_queue, _runtime_dj_state, llm_service=_llm_service)
+    dispatcher = EventDispatcher(event_queue, _runtime_dj_state, llm_service=_llm_service, dj_host_service=_dj_host_service)
     dispatcher.set_graph(_graph)
     asyncio.create_task(dispatcher.run())
 
@@ -121,7 +136,7 @@ async def lifespan(app: FastAPI):
     # 第 7 步：start Scheduler（4 Timer Loop）
     # ─────────────────────────────────────────────────
     logger.info("[lifespan 7/9] Start Scheduler")
-    scheduler = Scheduler(event_queue, settings.scheduler_config)
+    scheduler = Scheduler(event_queue, settings.scheduler_config, runtime_dj_state=_runtime_dj_state)
     scheduler.start()
 
     # ─────────────────────────────────────────────────
@@ -203,4 +218,4 @@ register_http_routes(app)
 @app.websocket("/ws/client")
 async def ws_endpoint(ws: WebSocket):
     """WebSocket 端点 — 前端实时通信。"""
-    await handle_ws_connection(ws, event_queue)
+    await handle_ws_connection(ws, event_queue, _runtime_dj_state)

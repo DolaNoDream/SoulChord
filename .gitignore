@@ -62,3 +62,4 @@ runtime*.log
 # === 杂项 ===
 main.py
 NEXT_SESSION_PROMPT.md
+api/QQMusicApi-main/

@@ -30,7 +30,7 @@ export function useAudio() {
     })
 
     el.addEventListener('ended', () => {
-      playerStore.next(true)  // fromEnded=true — 靠后端 play_end 事件驱动换歌，不发重复 skip
+      playerStore.onSongEnded()
     })
 
     el.addEventListener('waiting', () => {
@@ -54,12 +54,14 @@ export function useAudio() {
       playerStore.isLoading = false
       playerStore.isPlaying = false
       // 音频加载失败（CDN 返回 HTML / URL 过期）→ 自动切到下一首
-      // 跳过当前失败歌曲，避免死循环
+      // 不发 WS skip（不是用户行为），改发 play_end 通知后端推进队列
       const failedId = playerStore.currentSong?.id
       if (failedId) {
         playerStore.queue = playerStore.queue.filter(s => s.id !== failedId)
       }
-      playerStore.next()
+      // 先通知后端此歌结束，再本地推进（play_end → 后端消费队列）
+      playerStore.reportPlayEnd()
+      playerStore.next(true)  // fromEnded=true → 本地推进，不发 skip 反馈
     })
 
     audio.value = el

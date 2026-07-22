@@ -3,7 +3,9 @@ import { ref, computed } from 'vue'
 import type { Playlist, Song } from '@/types/music'
 import {
   importPlaylist, getPlaylists, getPlaylistDetail,
-  updatePlaylist, deletePlaylist,
+  updatePlaylist, deletePlaylist, importNeteasePlaylist,
+  createPlaylist as apiCreatePlaylist,
+  addSongToPlaylist as apiAddSongToPlaylist,
 } from '@/api/agent'
 import { useUserStore } from './user'
 
@@ -49,6 +51,24 @@ export const usePlaylistStore = defineStore('playlist', () => {
       return true
     } catch (e) {
       errorMsg.value = e instanceof Error ? e.message : '导入失败，请检查链接是否有效'
+      return false
+    } finally {
+      isImporting.value = false
+    }
+  }
+
+  /** 从网易云账号导入歌单（按 netease_id） */
+  async function doImportFromNetease(neteaseId: number): Promise<boolean> {
+    isImporting.value = true
+    errorMsg.value = ''
+    try {
+      await importNeteasePlaylist(neteaseId)
+      await loadPlaylists()
+      const userStore = useUserStore()
+      userStore.requestAnalyze().catch(() => {})
+      return true
+    } catch (e) {
+      errorMsg.value = e instanceof Error ? e.message : '导入失败'
       return false
     } finally {
       isImporting.value = false
@@ -102,6 +122,44 @@ export const usePlaylistStore = defineStore('playlist', () => {
     }
   }
 
+  /** 新建一个空歌单 */
+  async function createPlaylist(name: string): Promise<boolean> {
+    errorMsg.value = ''
+    try {
+      const pl = await apiCreatePlaylist(name)
+      playlists.value.push(pl)
+      return true
+    } catch (e) {
+      errorMsg.value = e instanceof Error ? e.message : '创建歌单失败'
+      return false
+    }
+  }
+
+  /** 将歌曲添加到指定歌单 */
+  async function addSong(playlistId: string, song: any): Promise<boolean> {
+    errorMsg.value = ''
+    try {
+      await apiAddSongToPlaylist(playlistId, song)
+      // 更新本地歌单的歌曲计数
+      const pl = playlists.value.find(p => p.playlist_id === playlistId)
+      if (pl) pl.song_count += 1
+      return true
+    } catch (e) {
+      errorMsg.value = e instanceof Error ? e.message : '添加歌曲失败'
+      return false
+    }
+  }
+
+  /** 判断是否为网易云导入的歌单（不可删除） */
+  function isNeteaseImported(playlist: Playlist): boolean {
+    return !!playlist.netease_id
+  }
+
+  /** 获取非网易云导入的歌单（可用于手动添加歌曲） */
+  const userPlaylists = computed(() =>
+    playlists.value.filter(p => !p.netease_id)
+  )
+
   /** 设置初始数据（来自 /api/init） */
   function setFromInit(data: Playlist[]) {
     playlists.value = data
@@ -109,8 +167,9 @@ export const usePlaylistStore = defineStore('playlist', () => {
 
   return {
     playlists, selectedPlaylist, selectedSongs, isLoading, isImporting, errorMsg,
-    playlistCount, totalSongs,
-    loadPlaylists, doImport, viewPlaylist, renamePlaylist, removePlaylist,
+    playlistCount, totalSongs, userPlaylists,
+    loadPlaylists, doImport, doImportFromNetease, viewPlaylist, renamePlaylist, removePlaylist,
+    createPlaylist, addSong, isNeteaseImported,
     setFromInit,
   }
 })

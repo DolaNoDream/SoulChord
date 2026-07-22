@@ -1,6 +1,6 @@
 // ========================================
 // SoulChord 全局样式
-// 暗色主题 · 温暖氛围
+// AI 电台 · 深黑蓝 + 点阵科技背景
 // ========================================
 
 @use './variables.scss' as *;
@@ -20,8 +20,9 @@ html, body {
   overflow: hidden;
   font-family: $font-family;
   font-size: $font-size-base;
-  color: $text-primary;
-  background: $bg-primary;
+  color: var(--text-primary);
+  background: var(--bg-primary);
+  transition: background-color 0.3s ease, color 0.3s ease;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   user-select: none;
@@ -30,6 +31,16 @@ html, body {
 #app {
   width: 100%;
   height: 100%;
+  box-shadow: var(--edge-glow);
+}
+
+// ---- Glassmorphism 工具类 ----
+.glass-panel {
+  background: $bg-glass;
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid $border-subtle;
+  border-radius: $radius-lg;
 }
 
 // ---- 滚动条样式 ----
@@ -64,6 +75,27 @@ a {
   &:hover {
     color: $accent-secondary;
   }
+}
+
+// ---- 动画 ----
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+@keyframes breathe {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.05); }
+}
+
+@keyframes spin-slow {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
 }
 
 // ---- 拖拽区域 ----

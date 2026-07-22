@@ -95,6 +95,12 @@ class TestSongFinishedQueueHasNext:
             actions=[],
         )
 
+        # ★ P0-3: 同步设置 live RDS（生产代码从 live RDS 读队列，不用快照）
+        ctx["runtime_dj_state"]["playlist_queue"] = [
+            {"song_id": "s002", "name": "下一首", "artist": "Artist"},
+        ]
+        ctx["runtime_dj_state"]["program_mood"] = "warm"
+
         with patch(
             "agent.nodes.action_executor._music.get_play_url",
             new_callable=AsyncMock,
@@ -104,10 +110,12 @@ class TestSongFinishedQueueHasNext:
 
         # Graph 结果
         assert result.get("should_play_music") is True, "应播下一首"
-        assert result.get("should_speak") is False
+        # 队列 1 首 → 消费后 remaining=0 ≤ 3 → 低水位触发 → DJ 说话
+        assert result.get("should_speak") is True, "低水位应说话"
         pending = result.get("pending_payload") or {}
         assert pending["music_play"]["song"]["id"] == "s002"
         assert pending["music_play"]["auto_play"] is True
+        assert pending.get("chat_reply") and len(pending["chat_reply"]) > 0, "应有低水位过渡语"
 
         # feedback_record is None（★ 回归断言）
         assert result.get("feedback_record") is None, \
@@ -190,6 +198,9 @@ class TestSongFinishedQueueEmpty:
             actions=[],
         )
 
+        # ★ P0-3: 同步 live RDS
+        ctx["runtime_dj_state"]["program_mood"] = "warm"
+
         result = await ctx["graph"].ainvoke(state)
 
         # ── 核心断言（★ 回归点）──
@@ -231,7 +242,8 @@ class TestSongFinishedQueueEmpty:
         ts = result.get("pending_payload", {}).get("transition_speech", {}) or {}
         assert isinstance(ts, dict)
         if ts.get("audio_url"):
-            assert ts["audio_url"].startswith("mock://")
+            assert isinstance(ts["audio_url"], str) and len(ts["audio_url"]) > 0, \
+                "audio_url 应为非空字符串（mock 或真实 TTS URL）"
 
     @pytest.mark.asyncio
     async def test_song_finished_queue_empty_no_memory_write(self, e2e_context):
@@ -278,6 +290,9 @@ class TestSongFinishedQueueEmpty:
             program={"today_theme": "夜跑"},
             actions=[],
         )
+
+        # ★ P0-3: 同步 live RDS
+        ctx["runtime_dj_state"]["program_mood"] = "energetic"
 
         result = await ctx["graph"].ainvoke(state)
 

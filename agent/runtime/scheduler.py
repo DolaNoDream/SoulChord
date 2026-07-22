@@ -28,11 +28,13 @@ class Scheduler:
     start() 在 lifespan Step 7 调用（Dispatcher 之后）。
     """
 
-    def __init__(self, event_queue: EventQueue, config: Optional[SchedulerConfig] = None):
+    def __init__(self, event_queue: EventQueue, config: Optional[SchedulerConfig] = None, runtime_dj_state: Optional[dict] = None):
         self._queue = event_queue
         self._config = config or SchedulerConfig()
         self._running = False
         self._tasks: list[asyncio.Task] = []
+        self._runtime_dj_state = runtime_dj_state
+        self._dj_speech_interval_s = getattr(config, 'speech_interval_s', 120) if config else 120
 
     def start(self):
         """启动所有 4 个 Timer Loop（非阻塞，创建后台 Task）。"""
@@ -71,12 +73,64 @@ class Scheduler:
                 event = Event.from_timer(event_type, {
                     "ts": int(time.time() * 1000),
                     "scheduler_loop": name,
+                    "timer_type": name,
                 })
                 await self._queue.put(event)
                 logger.debug("Scheduler pushed %s (loop=%s)", event_type.value, name)
+
+                # ★ DJ backstop：heartbeat 循环检查是否需要推 DJ_MONOLOGUE
+                if name == "heartbeat":
+                    await self._check_dj_monologue_backstop()
             except asyncio.CancelledError:
                 logger.info("Scheduler loop %s cancelled", name)
                 break
             except Exception as e:
                 logger.error("Scheduler loop %s error: %s", name, e)
         logger.info("Scheduler loop %s stopped", name)
+
+    async def _check_dj_monologue_backstop(self):
+        """检查是否需要推 DJ_MONOLOGUE 兜底事件。
+
+        条件（全部满足）：
+          1. 有 current_song
+          2. current_song_id ≠ last_dj_speech_song_id（尚未为此歌曲生成话术）
+          3. 距上次说话 > speech_interval_s
+
+        注意：此方法只在 heartbeat 循环中被调用（30s 间隔）。
+        """
+        rds = self._runtime_dj_state
+        if not rds:
+            return
+
+        current_song = rds.get("current_song")
+        if not current_song:
+            return
+
+        song_id = current_song.get("song_id") or current_song.get("id", "")
+        if not song_id:
+            return
+
+        last_speech_song = rds.get("last_dj_speech_song_id", "")
+        last_speech_at = rds.get("last_dj_speech_at_ms", 0)
+        now_ms = int(time.time() * 1000)
+
+        # ★ 防止与 ws_handler play_start 触发的 DJ_MONOLOGUE 竞态：
+        #   如果 play_start 刚推过 DJ_MONOLOGUE（< 30s 内），backstop 跳过
+        last_play_start_dj_ts = rds.get("last_play_start_dj_ts", 0)
+        if now_ms - last_play_start_dj_ts < 30000:
+            logger.debug("Scheduler backstop skip: play_start DJ pushed %dms ago",
+                         now_ms - last_play_start_dj_ts)
+            return
+
+        # ★ 首次说话（last_speech_at_ms==0）用短冷却 5s，之后用配置的 speech_interval_s
+        cooldown_ms = 5000 if last_speech_at == 0 else self._dj_speech_interval_s * 1000
+        if (song_id != last_speech_song
+                and now_ms - last_speech_at > cooldown_ms):
+            from agent.shared.enums import EventType as ET
+            backstop_event = Event.from_timer(ET.DJ_MONOLOGUE, {
+                "song_id": song_id,
+                "trigger": "scheduler_backstop",
+                "ts": now_ms,
+            })
+            await self._queue.put(backstop_event)
+            logger.info("Scheduler backstop: pushed DJ_MONOLOGUE for song=%s", song_id)

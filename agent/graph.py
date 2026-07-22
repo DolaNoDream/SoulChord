@@ -35,6 +35,7 @@ from agent.nodes.emit_response import emit_response_node
 from agent.nodes.action_executor import action_executor_node
 from agent.nodes.feedback_extractor import feedback_extractor_node
 from agent.nodes.tool_dispatcher import tool_dispatcher_node
+from agent.nodes.dj_host import dj_host_node
 
 logger = logging.getLogger(__name__)
 
@@ -57,6 +58,14 @@ def _route_from_tool_dispatcher(state: AgentState) -> str:
     return state.get("next_node", "action_planner")
 
 
+def _route_from_context_builder(state: AgentState) -> str:
+    """context_builder → dj_host / dj_planner。"""
+    trigger = state.get("trigger_type", "")
+    if trigger == "dj_monologue":
+        return "dj_host"
+    return "dj_planner"
+
+
 def build_graph():
     """构造 8 节点 StateGraph + 编译。
 
@@ -65,7 +74,7 @@ def build_graph():
     """
     builder = StateGraph(AgentState)
 
-    # ── 注册全部 8 节点 ──
+    # ── 注册全部 9 节点 ──
     builder.add_node("router", router_node)
     builder.add_node("context_builder", context_builder_node)
     builder.add_node("dj_planner", dj_planner_node)
@@ -74,6 +83,7 @@ def build_graph():
     builder.add_node("emit_response", emit_response_node)
     builder.add_node("feedback_extractor", feedback_extractor_node)
     builder.add_node("tool_dispatcher", tool_dispatcher_node)
+    builder.add_node("dj_host", dj_host_node)
 
     # ── 入口 ──
     builder.set_entry_point("router")
@@ -90,8 +100,15 @@ def build_graph():
         },
     )
 
-    # ── context_builder → dj_planner ──
-    builder.add_edge("context_builder", "dj_planner")
+    # ── context_builder → dj_host / dj_planner（conditional） ──
+    builder.add_conditional_edges(
+        "context_builder",
+        _route_from_context_builder,
+        {
+            "dj_host": "dj_host",
+            "dj_planner": "dj_planner",
+        },
+    )
 
     # ── feedback_extractor → action_planner ──
     builder.add_edge("feedback_extractor", "action_planner")
@@ -116,6 +133,9 @@ def build_graph():
         },
     )
 
+    # ── dj_host → action_planner ──
+    builder.add_edge("dj_host", "action_planner")
+
     # ── action_planner → action_executor → emit_response ──
     builder.add_edge("action_planner", "action_executor")
     builder.add_edge("action_executor", "emit_response")
@@ -123,5 +143,5 @@ def build_graph():
     # ── emit_response → END ──
     builder.add_edge("emit_response", END)
 
-    logger.info("StateGraph compiled: 8 nodes, 7 edges (3 conditional)")
+    logger.info("StateGraph compiled: 9 nodes, 8 edges (4 conditional)")
     return builder.compile()

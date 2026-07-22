@@ -11,6 +11,8 @@ export type WsMessageType =
   | 'status'     // 系统状态
   | 'error'      // 错误
   | 'heartbeat'  // 心跳
+  | 'dj'         // AI DJ 话术
+  | 'tts'        // TTS 语音合成
 
 /** WS 消息统一格式 */
 export interface WsMessage<T = unknown> {
@@ -40,6 +42,25 @@ export interface ChatReplyPayload {
   url: string           // 歌曲播放链接/歌曲封面资源地址
   operation: OperationType  // 后端下发操作指令
   intent?: IntentType   // 后端识别的意图类型
+}
+
+/** AI DJ 话术（dj.speech — 主持人过渡语） */
+export interface DjSpeechPayload {
+  text: string
+  audio_url?: string
+  audio_duration_ms?: number
+  mood?: string
+}
+
+/** TTS 语音合成（tts.synthesize — DJ 语音播报） */
+export interface TtsSynthesizePayload {
+  text: string
+  audio_url: string
+  audio_duration_ms: number
+  voice: string
+  expression: string
+  mood?: string
+  theme?: string
 }
 
 /** 操作指令标识（对齐文档 3.3 节） */

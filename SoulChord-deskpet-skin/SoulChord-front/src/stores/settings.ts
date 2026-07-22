@@ -9,9 +9,7 @@ export const useSettingsStore = defineStore('settings', () => {
   const theme = ref<ThemeMode>('dark')
   const alwaysOnTop = ref(true)
   const language = ref<'zh-CN' | 'en-US'>('zh-CN')
-  // 对齐文档：LLM APIKey + 网易云 APIKey 分离
   const llmApiKey = ref('')
-  const neteaseApiKey = ref('')
   // 网易云登录状态
   const neteaseLoginStatus = ref(false)
   const neteaseNickname = ref('')
@@ -25,7 +23,6 @@ export const useSettingsStore = defineStore('settings', () => {
   /** 从后端 GET /api/init 的 settings 字段加载 */
   function loadFromBackend(backendSettings: Record<string, unknown>) {
     if (typeof backendSettings.llm_apikey === 'string') llmApiKey.value = backendSettings.llm_apikey
-    if (typeof backendSettings.netease_apikey === 'string') neteaseApiKey.value = backendSettings.netease_apikey
     if (backendSettings.language) language.value = backendSettings.language as typeof language.value
     persistToStorage()
   }
@@ -43,7 +40,6 @@ export const useSettingsStore = defineStore('settings', () => {
       if (stored) {
         const data = JSON.parse(stored)
         if (data.llmApiKey) llmApiKey.value = data.llmApiKey
-        if (data.neteaseApiKey) neteaseApiKey.value = data.neteaseApiKey
         if (data.theme) theme.value = data.theme
         if (data.alwaysOnTop !== undefined) alwaysOnTop.value = data.alwaysOnTop
         if (data.language) language.value = data.language
@@ -57,7 +53,6 @@ export const useSettingsStore = defineStore('settings', () => {
     localStorage.setItem('soulchord-settings', JSON.stringify({
       theme: theme.value, alwaysOnTop: alwaysOnTop.value,
       language: language.value, llmApiKey: llmApiKey.value,
-      neteaseApiKey: neteaseApiKey.value,
       neteaseLoginStatus: neteaseLoginStatus.value,
       neteaseNickname: neteaseNickname.value,
     }))
@@ -72,17 +67,16 @@ export const useSettingsStore = defineStore('settings', () => {
     try {
       await updateSettings({
         llm_apikey: llmApiKey.value,
-        netease_apikey: neteaseApiKey.value,
       })
     } catch { /* 后端不可用时忽略 */ }
   }
 
-  watch([theme, alwaysOnTop, language, llmApiKey, neteaseApiKey], () => persistToStorage())
+  watch([theme, alwaysOnTop, language, llmApiKey], () => persistToStorage())
 
   loadFromStorage()
 
   return {
-    theme, alwaysOnTop, language, llmApiKey, neteaseApiKey,
+    theme, alwaysOnTop, language, llmApiKey,
     neteaseLoginStatus, neteaseNickname,
     isDark, hasLlmKey, hasNeteaseLogin,
     syncAlwaysOnTop, syncToBackend, loadFromStorage, loadFromBackend,

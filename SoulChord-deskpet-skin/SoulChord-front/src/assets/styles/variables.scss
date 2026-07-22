@@ -1,44 +1,48 @@
 // ========================================
 // SoulChord 全局 SCSS 变量
-// 温暖的暗色主题设计系统
+// AI 电台 Dark Mode · 深黑蓝 + 电台绿
 // ========================================
 
 // ---- 背景色 ----
-$bg-primary: #0d0d12;
-$bg-secondary: #15151e;
-$bg-tertiary: #1c1c28;
-$bg-glass: rgba(20, 20, 32, 0.65);
-$bg-glass-hover: rgba(28, 28, 40, 0.8);
+$bg-primary: #05070D;                 // 深黑蓝（深夜·太空·录音棚）
+$bg-secondary: #0d0f1a;              // 稍亮一层
+$bg-tertiary: #141828;               // 卡片/面板底
+$bg-glass: rgba(20, 25, 40, 0.65);  // 玻璃卡片（glassmorphism）
+$bg-glass-hover: rgba(30, 35, 55, 0.8);
 
 // ---- 品牌/强调色 ----
-$accent-primary: #a78bfa;       // 柔和紫色
-$accent-secondary: #7c3aed;     // 深紫
-$accent-warm: #f59e0b;          // 温暖琥珀
-$accent-cool: #38bdf8;          // 天空蓝
-$accent-success: #4ade80;       // 绿色
+$accent-primary: #19E6A2;            // 电台绿（ON AIR · 活跃状态）
+$accent-secondary: #10b981;          // 深翠绿
+$accent-blue: #6675FF;               // AI 蓝紫（对话气泡 · 科技感）
+$accent-warm: #FFB86C;               // 暖橙（情绪标签 · DJ 氛围）
+$accent-cool: #22d3ee;               // Cyan
+$accent-success: #4ade80;            // 绿色
 
 // ---- 文字色 ----
-$text-primary: #e8e8ed;
+$text-primary: #F5F5F5;              // 亮白
 $text-secondary: #9494a0;
 $text-muted: #5c5c6e;
-$text-on-accent: #ffffff;
+$text-on-accent: #05070D;
 
 // ---- 边框 ----
 $border-subtle: rgba(255, 255, 255, 0.06);
 $border-default: rgba(255, 255, 255, 0.10);
 
 // ---- 阴影 ----
-$shadow-lg: 0 8px 32px rgba(0, 0, 0, 0.4);
+$shadow-lg: 0 8px 32px rgba(0, 0, 0, 0.5);
 $shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.3);
 
 // ---- 圆角 ----
 $radius-sm: 8px;
 $radius-md: 12px;
-$radius-lg: 20px;
+$radius-lg: 16px;
 $radius-full: 9999px;
 
 // ---- 字体 ----
 $font-family: 'Inter', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+$font-mono: 'Space Mono', 'IBM Plex Mono', 'Consolas', monospace;
+$font-ai: 'IBM Plex Mono', 'Space Mono', 'Consolas', monospace;
+$font-display: 'Orbitron', 'Space Mono', monospace;
 $font-size-xs: 11px;
 $font-size-sm: 13px;
 $font-size-base: 15px;
@@ -56,6 +60,7 @@ $font-size-2xl: 32px;
 
   --accent-primary: #{$accent-primary};
   --accent-secondary: #{$accent-secondary};
+  --accent-blue: #{$accent-blue};
   --accent-warm: #{$accent-warm};
   --accent-cool: #{$accent-cool};
 
@@ -75,4 +80,32 @@ $font-size-2xl: 32px;
   --radius-full: #{$radius-full};
 
   --font-family: #{$font-family};
+  --font-mono: #{$font-mono};
+  --font-ai: #{$font-ai};
+  --font-display: #{$font-display};
+
+  --text-glow: 0 0 20px rgba(255, 255, 255, 0.15);
+  --edge-glow: inset 0 0 80px rgba(25, 230, 162, 0.25), inset 0 0 160px rgba(25, 230, 162, 0.12);
+}
+
+// ---- 白天主题（覆盖 CSS 变量）----
+html.theme-light {
+  --bg-primary: #f5f4ef;
+  --bg-secondary: #ebeae4;
+  --bg-tertiary: #e0dfd9;
+  --bg-glass: rgba(245, 244, 239, 0.75);
+  --bg-glass-hover: rgba(235, 234, 228, 0.85);
+
+  --text-primary: #1a1a1e;
+  --text-secondary: #5c5c66;
+  --text-muted: #999;
+
+  --border-subtle: rgba(0, 0, 0, 0.06);
+  --border-default: rgba(0, 0, 0, 0.12);
+
+  --shadow-lg: 0 8px 32px rgba(0, 0, 0, 0.08);
+  --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.04);
+
+  --text-glow: 0 0 20px rgba(0, 0, 0, 0.08);
+  --edge-glow: inset 0 0 80px rgba(102, 117, 255, 0.12), inset 0 0 160px rgba(102, 117, 255, 0.06);
 }

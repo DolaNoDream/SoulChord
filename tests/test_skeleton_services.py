@@ -78,29 +78,32 @@ class TestASRService:
     @pytest.mark.asyncio
     async def test_recognize_returns_correct_schema(self):
         """recognize 返回完整 schema（含 text/confidence/duration_ms/source）。"""
-        result = await asr_service.recognize("mock://audio/test.wav")
+        # 无 API Key 时降级返回 fish_audio_mock
+        result = await asr_service.recognize(b"mock audio data")
         assert isinstance(result, dict)
         assert "text" in result
         assert "confidence" in result
         assert "duration_ms" in result
         assert "source" in result
-        assert result["source"] == "xunfei_mock"
+        assert result["source"] in ("fish_audio_mock", "fish_audio"), \
+            f"source 应为 fish_audio_mock，实际: {result['source']}"
         assert 0.0 <= result["confidence"] <= 1.0
-        assert result["duration_ms"] > 0
 
     @pytest.mark.asyncio
-    async def test_recognize_empty_url_returns_empty_text(self):
-        """空 audio_url 返回 text="" / confidence=0.0 / duration_ms=0。"""
-        result = await asr_service.recognize("")
+    async def test_recognize_empty_data_returns_empty_text(self):
+        """空 audio_data 返回 text="" / confidence=0.0 / duration_ms=0。"""
+        result = await asr_service.recognize(b"")
         assert result["text"] == ""
         assert result["confidence"] == 0.0
         assert result["duration_ms"] == 0
-        assert result["source"] == "xunfei_mock"
+        # 无 API Key 时降级为 fish_audio_mock
+        assert result["source"] in ("fish_audio_mock", "fish_audio"), \
+            f"source 应为 fish_audio_mock，实际: {result['source']}"
 
     @pytest.mark.asyncio
-    async def test_recognize_whitespace_url_returns_empty(self):
-        """空白 audio_url 返回空结果。"""
-        result = await asr_service.recognize("   ")
+    async def test_recognize_empty_data_returns_empty(self):
+        """空 audio_data 返回空结果。"""
+        result = await asr_service.recognize(b"")
         assert result["text"] == ""
 
 

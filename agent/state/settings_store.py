@@ -11,7 +11,6 @@ from agent.config import settings as config_settings
 
 DEFAULT_SETTINGS: dict = {
     "llm_apikey": "",
-    "netease_apikey": "",
 }
 
 

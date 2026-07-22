@@ -1,10 +1,13 @@
 <script setup lang="ts">
 import type { ChatMessage } from '@/types/chat'
+import { useUserStore } from '@/stores/user'
 import SongCard from './SongCard.vue'
 
 defineProps<{
   message: ChatMessage
 }>()
+
+const userStore = useUserStore()
 
 function formatTime(timestamp: string): string {
   const date = new Date(timestamp)
@@ -21,169 +24,132 @@ function formatTime(timestamp: string): string {
 
 <template>
   <div
-    class="chat-bubble"
+    class="transcript"
     :class="{
-      'chat-bubble--user': message.role === 'user',
-      'chat-bubble--assistant': message.role === 'assistant',
-      'chat-bubble--streaming': message.isStreaming,
+      'transcript--user': message.role === 'user',
+      'transcript--assistant': message.role === 'assistant',
+      'transcript--streaming': message.isStreaming,
     }"
   >
-    <!-- 头像 -->
-    <div class="chat-bubble__avatar">
-      <template v-if="message.role === 'user'">
-        <div class="chat-bubble__avatar-icon chat-bubble__avatar-icon--user">👤</div>
-      </template>
-      <template v-else>
-        <div class="chat-bubble__avatar-icon chat-bubble__avatar-icon--dj">🎧</div>
-      </template>
+    <!-- role label -->
+    <div class="transcript__label">
+      <img v-if="message.role === 'user' && userStore.localAvatar" :src="userStore.localAvatar" class="transcript__avatar" />
+      <img v-if="message.role === 'assistant' && userStore.djAvatar" :src="userStore.djAvatar" class="transcript__avatar" />
+      <span class="transcript__role" :class="`transcript__role--${message.role}`">
+        {{ message.role === 'user' ? userStore.nickname : userStore.djName }}
+      </span>
+      <span class="transcript__time">{{ formatTime(message.timestamp) }}</span>
     </div>
 
     <!-- 消息内容 -->
-    <div class="chat-bubble__body">
-      <div class="chat-bubble__header">
-        <span class="chat-bubble__name">
-          {{ message.role === 'user' ? '我' : 'AI DJ' }}
-        </span>
-        <span class="chat-bubble__time">{{ formatTime(message.timestamp) }}</span>
-      </div>
+    <div class="transcript__body">
+      <p class="transcript__text">
+        {{ message.content }}
+        <span v-if="message.isStreaming" class="transcript__cursor">|</span>
+      </p>
+    </div>
 
-      <!-- 文字内容 -->
-      <div class="chat-bubble__content">
-        <p>{{ message.content }}</p>
-        <span v-if="message.isStreaming" class="chat-bubble__cursor">|</span>
-      </div>
+    <!-- 操作指示器 -->
+    <div v-if="message.operation && message.role === 'assistant'" class="transcript__operation">
+      <span v-if="message.operation === 'recommend'" class="transcript__op-tag transcript__op-tag--recommend">🎵 歌曲推荐</span>
+      <span v-else-if="message.operation === 'play_song'" class="transcript__op-tag transcript__op-tag--play">▶ 正在播放</span>
+      <span v-else-if="message.operation === 'skip_song'" class="transcript__op-tag transcript__op-tag--skip">⏭ 已切歌</span>
+      <span v-else-if="message.operation === 'add_playlist'" class="transcript__op-tag transcript__op-tag--add">📋 已加入队列</span>
+      <span v-else-if="message.operation === 'song_intro'" class="transcript__op-tag transcript__op-tag--intro">📖 歌曲介绍</span>
+    </div>
 
-      <!-- 操作指示器（对齐文档 3.3 节 operation 字段） -->
-      <div v-if="message.operation && message.role === 'assistant'" class="chat-bubble__operation">
-        <span v-if="message.operation === 'recommend'" class="chat-bubble__op-tag chat-bubble__op-tag--recommend">🎵 歌曲推荐</span>
-        <span v-else-if="message.operation === 'play_song'" class="chat-bubble__op-tag chat-bubble__op-tag--play">▶ 正在播放</span>
-        <span v-else-if="message.operation === 'skip_song'" class="chat-bubble__op-tag chat-bubble__op-tag--skip">⏭ 已切歌</span>
-        <span v-else-if="message.operation === 'add_playlist'" class="chat-bubble__op-tag chat-bubble__op-tag--add">📋 已加入队列</span>
-        <span v-else-if="message.operation === 'song_intro'" class="chat-bubble__op-tag chat-bubble__op-tag--intro">📖 歌曲介绍</span>
-      </div>
+    <!-- 歌曲链接预览 -->
+    <div v-if="message.url && message.role === 'assistant'" class="transcript__url-preview">
+      <img v-if="message.url.match(/\.(jpg|jpeg|png|gif|webp)(\?|$)/i)" :src="message.url" class="transcript__url-img" />
+    </div>
 
-      <!-- 歌曲链接预览 -->
-      <div v-if="message.url && message.role === 'assistant'" class="chat-bubble__url-preview">
-        <img v-if="message.url.match(/\.(jpg|jpeg|png|gif|webp)(\?|$)/i)" :src="message.url" class="chat-bubble__url-img" />
-      </div>
-
-      <!-- 附件：歌曲推荐 -->
-      <div
-        v-if="message.attachments && message.attachments.length > 0"
-        class="chat-bubble__attachments"
-      >
-        <template v-for="att in message.attachments" :key="att.type + (att.type === 'song' ? att.song.id : '')">
-          <div v-if="att.type === 'song'" class="chat-bubble__song-attachment">
-            <SongCard
-              :song="att.song"
-              :show-reason="true"
-              @play="() => {}"
-            />
-          </div>
-          <div v-else-if="att.type === 'playlist'" class="chat-bubble__playlist-attachment">
-            <p class="chat-bubble__playlist-name">📻 推荐歌单</p>
-            <p class="chat-bubble__playlist-reason">{{ att.reason }}</p>
-          </div>
-        </template>
-      </div>
+    <!-- 附件：歌曲推荐 -->
+    <div v-if="message.attachments && message.attachments.length > 0" class="transcript__attachments">
+      <template v-for="att in message.attachments" :key="att.type + (att.type === 'song' ? att.song.id : '')">
+        <div v-if="att.type === 'song'" class="transcript__song-attachment">
+          <SongCard :song="att.song" :show-reason="true" @play="() => {}" />
+        </div>
+        <div v-else-if="att.type === 'playlist'" class="transcript__playlist-attachment">
+          <p class="transcript__playlist-name">📻 推荐歌单</p>
+          <p class="transcript__playlist-reason">{{ att.reason }}</p>
+        </div>
+      </template>
     </div>
   </div>
 </template>
 
 <style lang="scss">
-.chat-bubble {
-  display: flex;
-  gap: 10px;
+.transcript {
   margin-bottom: 16px;
-  animation: bubbleIn 0.3s ease-out;
+  animation: fadeIn 0.3s ease-out;
 
   &--user {
-    flex-direction: row-reverse;
+    align-self: flex-end;
+    text-align: right;
 
-    .chat-bubble__body {
-      align-items: flex-end;
-    }
-
-    .chat-bubble__content {
-      background: rgba($accent-primary, 0.2);
-      border: 1px solid rgba($accent-primary, 0.3);
-    }
+    .transcript__label { flex-direction: row-reverse; }
+    .transcript__role { color: $text-secondary; }
   }
 
   &--assistant {
-    .chat-bubble__content {
-      background: $bg-glass;
-    }
+    align-self: flex-start;
+
+    .transcript__role { color: $accent-primary; }
   }
 
   &--streaming {
-    .chat-bubble__content {
+    .transcript__body {
       border-color: rgba($accent-warm, 0.3);
     }
   }
 
-  &__avatar {
-    flex-shrink: 0;
-    width: 36px;
-    height: 36px;
-
-    &-icon {
-      width: 100%;
-      height: 100%;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      border-radius: 50%;
-      font-size: 18px;
-
-      &--user {
-        background: linear-gradient(135deg, $accent-primary, $accent-secondary);
-      }
-
-      &--dj {
-        background: linear-gradient(135deg, $accent-warm, #ef4444);
-      }
-    }
-  }
-
-  &__body {
+  /* ── role label ── */
+  &__label {
     display: flex;
-    flex-direction: column;
-    max-width: 80%;
-    min-width: 0;
-  }
-
-  &__header {
-    display: flex;
-    gap: 8px;
     align-items: center;
+    gap: 8px;
     margin-bottom: 4px;
     padding: 0 4px;
   }
 
-  &__name {
-    font-size: $font-size-xs;
-    color: $text-secondary;
-    font-weight: 600;
+  &__role {
+    font-family: $font-mono;
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+  }
+
+  &__avatar {
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    object-fit: cover;
+    flex-shrink: 0;
   }
 
   &__time {
     font-size: 10px;
     color: $text-muted;
+    font-family: $font-mono;
   }
 
-  &__content {
+  /* ── 消息内容（透明，点阵透出）── */
+  &__body {
     padding: 10px 14px;
     border-radius: $radius-md;
-    border: 1px solid $border-subtle;
-    color: $text-primary;
-    font-size: $font-size-base;
-    line-height: 1.6;
+    border: 1px solid var(--border-subtle);
+    color: var(--text-primary);
+    line-height: 1.7;
     word-break: break-word;
+  }
 
-    p {
-      margin: 0;
-      display: inline;
+  &__text {
+    margin: 0;
+    font-size: 14px;
+
+    .transcript--assistant & {
+      font-family: $font-ai;
     }
   }
 
@@ -192,20 +158,36 @@ function formatTime(timestamp: string): string {
     animation: blink 0.8s infinite;
     color: $accent-warm;
     font-weight: bold;
+    margin-left: 2px;
   }
 
   &__operation { margin-top: 6px; }
-  &__op-tag { display: inline-block; padding: 2px 10px; border-radius: $radius-full; font-size: 10px; font-weight: 600;
-    &--recommend { background: rgba($accent-primary, 0.15); color: $accent-primary; }
-    &--play { background: rgba($accent-success, 0.15); color: $accent-success; }
+
+  &__op-tag {
+    display: inline-block;
+    padding: 2px 10px;
+    border-radius: $radius-full;
+    font-size: 10px;
+    font-weight: 500;
+    font-family: $font-mono;
+    letter-spacing: 0.3px;
+
+    &--recommend { background: rgba($accent-primary, 0.12); color: $accent-primary; }
+    &--play { background: rgba($accent-success, 0.12); color: $accent-success; }
     &--skip { background: rgba($text-muted, 0.15); color: $text-secondary; }
-    &--add { background: rgba($accent-cool, 0.15); color: $accent-cool; }
-    &--intro { background: rgba($accent-warm, 0.15); color: $accent-warm; }
+    &--add { background: rgba($accent-cool, 0.12); color: $accent-cool; }
+    &--intro { background: rgba($accent-warm, 0.12); color: $accent-warm; }
   }
 
   &__url-preview { margin-top: 8px; }
-  &__url-img { max-width: 200px; max-height: 200px; border-radius: $radius-sm; object-fit: cover;
-    border: 1px solid $border-subtle; }
+
+  &__url-img {
+    max-width: 200px;
+    max-height: 200px;
+    border-radius: $radius-sm;
+    object-fit: cover;
+    border: 1px solid $border-subtle;
+  }
 
   &__attachments {
     margin-top: 8px;
@@ -214,12 +196,10 @@ function formatTime(timestamp: string): string {
     gap: 8px;
   }
 
-  &__song-attachment {
-    max-width: 280px;
-  }
+  &__song-attachment { max-width: 280px; }
 
   &__playlist-attachment {
-    background: $bg-glass;
+    background: rgba(20, 25, 40, 0.45);
     padding: 10px 14px;
     border-radius: $radius-md;
     border: 1px solid $border-subtle;
@@ -236,17 +216,6 @@ function formatTime(timestamp: string): string {
       font-size: $font-size-xs;
       color: $text-secondary;
     }
-  }
-}
-
-@keyframes bubbleIn {
-  from {
-    opacity: 0;
-    transform: translateY(8px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
   }
 }
 

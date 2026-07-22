@@ -68,6 +68,9 @@ async def action_executor_node(state: dict) -> dict:
                 needs_replan = True
                 break  # 跳过剩余 actions
 
+            # ★ 更新 RDS current_song（DJ Host backstop 需要实时 current_song）
+            _update_rds_current_song(state, params, pending_payload)
+
         else:
             logger.debug("ActionExecutor: unknown action type=%s (skip)", action_type)
 
@@ -101,7 +104,9 @@ async def _exec_tts(pending_payload: dict, params: dict) -> dict | None:
         ts["duration_ms"] = result["duration_ms"]
         ts["provider"] = result["provider"]
         pending_payload["transition_speech"] = ts
-        logger.info("ActionExecutor: tts_speak done (duration=%dms)", result["duration_ms"])
+        has_audio = "yes" if result.get("audio_url") else "NO"
+        logger.info("ActionExecutor: tts_speak done (provider=%s audio=%s duration=%dms text_len=%d)",
+                     result.get("provider", "?"), has_audio, result["duration_ms"], len(text))
         return None
     except Exception as e:
         logger.error("ActionExecutor: tts_speak failed: %s", e)
@@ -217,4 +222,32 @@ def _save_playback_state_to_mirror(song_id: str, song: dict, play_url: str):
             json.dump(mirror, f, ensure_ascii=False, indent=2)
     except OSError:
         logger.warning("Failed to write playback state to player_mirror")
+
+
+def _update_rds_current_song(state: dict, params: dict, pending_payload: dict):
+    """更新 RDS current_song，供 DJ Host backstop 使用。
+
+    RDS current_song 仅在启动时从 player_mirror.json 加载，
+    运行时默认不更新。此函数在每首歌播放成功后同步更新 RDS。
+    """
+    rds = state.get("dependencies", {}).get("runtime_dj_state")
+    if not rds:
+        return
+    song_id = params.get("song_id", "")
+    if not song_id:
+        return
+    mp = pending_payload.get("music_play") or {}
+    song = mp.get("song") or {}
+    artists = song.get("artists", [])
+    artist_str = (
+        ", ".join(a.get("name", "") for a in artists)
+        if artists else song.get("artist", "")
+    )
+    rds["current_song"] = {
+        "song_id": song_id,
+        "name": song.get("name", "未知歌曲"),
+        "artist": artist_str,
+    }
+    logger.debug("RDS current_song updated: %s — %s",
+                 rds["current_song"].get("name"), song_id)
 

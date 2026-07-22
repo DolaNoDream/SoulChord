@@ -175,7 +175,7 @@ function emotionLabel(emotion: string): string {
   &__title {
     font-size: $font-size-base;
     font-weight: 600;
-    color: $text-primary;
+    color: var(--text-primary);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -184,13 +184,13 @@ function emotionLabel(emotion: string): string {
 
   &__artist {
     font-size: $font-size-sm;
-    color: $text-secondary;
+    color: var(--text-secondary);
     margin: 2px 0 0;
   }
 
   &__reason {
     font-size: $font-size-xs;
-    color: $accent-warm;
+    color: var(--accent-warm);
     margin: 4px 0 0;
     font-style: italic;
   }
@@ -205,13 +205,13 @@ function emotionLabel(emotion: string): string {
 
   &__duration {
     font-size: $font-size-xs;
-    color: $text-muted;
+    color: var(--text-muted);
     font-variant-numeric: tabular-nums;
   }
 
   &__emotion {
     font-size: 10px;
-    color: $text-muted;
+    color: var(--text-muted);
   }
 }
 </style>

@@ -103,7 +103,6 @@ class TestInitDataFiles:
             data = json.load(f)
         assert data == DEFAULT_SETTINGS
         assert data["llm_apikey"] == ""
-        assert data["netease_apikey"] == ""
 
     def test_playlists_content(self, tmp_data_dir):
         """playlists.json 内容与 DEFAULT_PLAYLISTS 一致。"""

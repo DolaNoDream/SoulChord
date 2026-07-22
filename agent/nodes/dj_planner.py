@@ -16,6 +16,9 @@ from agent.shared.enums import InitMode, ProgramMood
 
 logger = logging.getLogger(__name__)
 
+# ★ v9.13: INIT 目标队列长度 — LLM 规划足够歌曲供逐首解析
+INIT_TARGET_QUEUE_SIZE = 12
+
 
 async def dj_planner_node(state: dict) -> dict:
     """DJ Planner 主节点 — 单次 LLM 调用。
@@ -59,8 +62,26 @@ async def dj_planner_node(state: dict) -> dict:
 async def _handle_init(state: dict, snapshot: dict) -> dict:
     """INIT_PROMPT 分支 — 生成 init_plan。
 
+    支持 Tool Loop（v9.1）：
+    - Round 1：调 LLM 生成 init_plan，注入 play_music 工具调用
+    - Round 2：tool_messages 已有搜索结果，透传 init_plan 到 action_planner
+
     优先调 LLM（含重试 + 降级），无 LLMService 时回退 mock。
     """
+    # Round 2：tool 搜索结果已就绪，直接透传 init_plan
+    tool_messages = state.get("tool_messages", []) or []
+    if tool_messages:
+        init_plan = state.get("init_plan") or {}
+        logger.info("Init round 2: tool_messages=%d, passing init_plan to action_planner",
+                    len(tool_messages))
+        return {
+            "llm_decision": None,
+            "init_plan": init_plan,
+            "pending_tool_calls": [],
+            "next_node": "action_planner",
+        }
+
+    # Round 1：调 LLM 或 mock
     llm = _get_llm_service(state)
     init_mode = state.get("init_mode", InitMode.FIRST_INIT)
     env = state.get("environment", {}) or {}
@@ -87,12 +108,37 @@ async def _handle_init(state: dict, snapshot: dict) -> dict:
         # 无 LLMService（测试 / 未配置）→ 回退 mock
         init_plan = _mock_init_plan(init_mode)
 
+    # ★ Inject play_music tool calls for initial_playlist
+    pending_calls = _inject_play_music_tools(init_plan)
+
     return {
         "llm_decision": None,
         "init_plan": init_plan,
-        "pending_tool_calls": [],
-        "next_node": "action_planner",
+        "pending_tool_calls": pending_calls,
+        "next_node": "tool_dispatcher" if pending_calls else "action_planner",
     }
+
+
+def _inject_play_music_tools(init_plan: dict) -> list:
+    """为 init_plan 的初始播放列表注入 play_music 搜索工具调用。
+
+    提取前 INIT_TARGET_QUEUE_SIZE 首歌的 name+artist 作为搜索 query，
+    让 tool_dispatcher 执行真实搜索。搜索结果供 action_planner 逐首解析为真实 song_id。
+
+    ★ v9.13: 注入全部规划歌曲（不再只取前 3 首），保证 playlist_queue 多样化。
+    """
+    initial_playlist = init_plan.get("initial_playlist", [])
+    tool_calls = []
+    if initial_playlist:
+        for song in initial_playlist[:INIT_TARGET_QUEUE_SIZE]:
+            name = song.get("name", "")
+            artist = song.get("artist", "")
+            query = f"{name} {artist}".strip()
+            if query and len(query) > 1:
+                tool_calls.append({"name": "play_music", "args": {"query": query}})
+    if tool_calls:
+        logger.info("Injected %d play_music tool calls for init_plan", len(tool_calls))
+    return tool_calls
 
 
 async def _handle_conversation(state: dict, snapshot: dict) -> dict:
@@ -125,7 +171,7 @@ async def _handle_timer(state: dict, snapshot: dict) -> dict:
     llm = _get_llm_service(state)
     trigger_event = state.get("trigger_event") or {}
     context = _build_prompt_context(state, snapshot, trigger_type="timer_event")
-    context["timer_type"] = trigger_event.get("timer_type", "heartbeat")
+    context["timer_type"] = trigger_event.get("scheduler_loop", trigger_event.get("timer_type", "heartbeat"))
     prompt = format_timer_prompt(context)
 
     if llm:
@@ -144,8 +190,19 @@ async def _handle_timer(state: dict, snapshot: dict) -> dict:
 async def _handle_replan(state: dict, snapshot: dict) -> dict:
     """REPLAN 分支 — 复用 CONVERSATION_PROMPT + reason。
 
+    支持 Tool Loop Round 2（v9.2 修复）：
+    - Round 1：调 LLM 搜索歌曲（输出 tool_calls）
+    - Round 2：搜索结果已就绪，直接基于搜索结果构建播放列表决策
+
     优先调 LLM，无 LLMService 时回退 mock。
     """
+    tool_messages = state.get("tool_messages", []) or []
+
+    # ★ Round 2：搜索结果已就绪，直接基于搜索结果构建播放列表（跳过 LLM）
+    if tool_messages:
+        return _build_replan_from_search(tool_messages, state, snapshot)
+
+    # Round 1：调 LLM 搜索
     llm = _get_llm_service(state)
     reason = (state.get("trigger_event") or {}).get("reason", "播放列表已空，需要重新规划")
     context = _build_prompt_context(state, snapshot, trigger_type="replan_event")
@@ -245,22 +302,43 @@ def _format_tool_results(tool_messages: list) -> str:
 def _ensure_tool_calls(decision: dict) -> dict:
     """确保 LLM decision 包含 play_music 工具调用。
 
-    安全网：如果 LLM 直接输出了歌曲但没有请求搜索，为其注入
-    一个 play_music 工具调用，让 tool loop 先去搜索真实歌曲。
+    ★ v9.12.2: LLM 推荐 N 首不同歌曲 → 每首各生成一个 play_music 搜索调用。
+      让 tool_dispatcher 搜索到每首歌的真实版本，避免全部搜索结果来自同一 query
+      导致队列全是一首歌的不同版本。
+
+    以前行为（Bug）：只给第 1 首歌生成搜索 → 5 个搜索结果全是同一首歌 → 队列 1 首
+    现在行为：为每首独特的歌各生成搜索 → 搜索结果多样 → 队列 N 首（去重后）
     """
     playlist = decision.get("playlist_decision", {}) or {}
     songs = playlist.get("songs", []) or []
     tool_calls = decision.get("tool_calls", []) or []
 
-    # 歌曲非空 且 无 play_music 工具调用 → 注入搜索
-    has_play_music = any(tc.get("name") == "play_music" for tc in tool_calls)
-    if songs and not has_play_music:
-        first = songs[0]
-        query = first.get("name", "") or first.get("query", "")
-        if query:
-            logger.info("_ensure_tool_calls: injecting play_music query=%s", query)
+    # 收集已有的 play_music query（去重）
+    existing_queries: set[str] = set()
+    for tc in tool_calls:
+        if tc.get("name") == "play_music":
+            q = tc.get("args", {}).get("query", "")
+            if q:
+                existing_queries.add(q.lower().strip())
+
+    # 为每首尚未搜索的歌曲注入 play_music
+    added = 0
+    for song in songs:
+        name = song.get("name", "")
+        artist = song.get("artist", "")
+        query = f"{name} {artist}".strip() or name
+        if query and query.lower().strip() not in existing_queries:
+            existing_queries.add(query.lower().strip())
             tool_calls.append({"name": "play_music", "args": {"query": query}})
-            decision["tool_calls"] = tool_calls
+            added += 1
+
+    if added:
+        logger.info("_ensure_tool_calls: injected %d play_music calls for %d songs",
+                    added, len(songs))
+        decision["tool_calls"] = tool_calls
+    else:
+        logger.debug("_ensure_tool_calls: no injection needed (%d existing calls for %d songs)",
+                     len(tool_calls), len(songs))
     return decision
 
 
@@ -284,6 +362,90 @@ def _package_decision(decision: dict, state: dict) -> dict:
         "pending_tool_calls": pending,
         "next_node": next_node,
     }
+
+
+# ═══════════════════════════════════════════════════════════════
+# Tool Loop Round 2 辅助 — 从搜索结果直接构建播放列表
+# ═══════════════════════════════════════════════════════════════
+
+
+def _build_replan_from_search(tool_messages: list, state: dict, snapshot: dict) -> dict:
+    """Tool Loop Round 2：从搜索结果直接构建播放列表决策，跳过 LLM。
+
+    与 _handle_init Round 2 透传策略不同（init_plan 已包含完整节目规划），
+    REPLAN Round 2 需要实时基于搜索结果构建播放列表，
+    因为 Round 1 的 LLM decision 只包含 tool_calls（搜索请求），不包含 playlist_decision。
+
+    v9.2 修复：搜索结果已就绪时不再调 LLM，避免 REPLAN prompt 中
+    "先输出 tool_calls" 的指令让 LLM 在 Round 2 继续输出搜索请求而非 playlist_decision。
+    """
+    songs = _extract_songs_from_tool_messages(tool_messages)
+    reason = (state.get("trigger_event") or {}).get("reason", "播放列表补充")
+
+    if songs:
+        prog = snapshot.get("program", state.get("program", {})) or {}
+        decision = {
+            "program_decision": {
+                "today_theme": prog.get("today_theme", None),
+                "current_segment": "music",
+                "program_mood": prog.get("program_mood", snapshot.get("program_mood", "neutral")),
+                "program_goal": "继续陪伴用户",
+                "voice_style": None,
+                "speech_rate": None,
+                "speak_frequency": None,
+            },
+            "playlist_decision": {
+                "action": "add",
+                "songs": [
+                    {"name": s.get("name", ""), "artist": _extract_artist_str(s), "scene_match": "default"}
+                    for s in songs[:5]
+                ],
+                "reason": f"REPLAN搜索结果自动续杯（{reason}）",
+            },
+            "dialogue_decision": {
+                "should_speak": False,
+                "text": "",
+                "style": "warm",
+            },
+            "tool_calls": [],
+        }
+        logger.info("Replan round 2: built playlist from %d search results, reason=%r",
+                    len(songs), reason)
+        return _package_decision(decision, state)
+
+    # 搜索结果为空 → 回退 mock（极端兜底，不应发生）
+    logger.warning("Replan round 2: no songs extracted from %d tool_messages, using mock fallback",
+                   len(tool_messages))
+    context = _build_prompt_context(state, snapshot, trigger_type="replan_event")
+    decision = _mock_replan_decision(context)
+    return _package_decision(_ensure_tool_calls(decision), state)
+
+
+def _extract_songs_from_tool_messages(tool_messages: list) -> list[dict]:
+    """从 tool_messages 中提取 play_music 搜索结果中的歌曲（去重，保留搜索顺序）。"""
+    seen = set()
+    result = []
+    for msg in reversed(tool_messages):
+        if msg.get("name") != "play_music":
+            continue
+        res = msg.get("result", {})
+        if not isinstance(res, dict):
+            continue
+        songs = res.get("songs", [])
+        for s in songs:
+            sid = s.get("id", "") or s.get("song_id", "")
+            if sid and sid not in seen:
+                seen.add(sid)
+                result.append(s)
+    return result
+
+
+def _extract_artist_str(song: dict) -> str:
+    """从搜索结果 song dict 中提取歌手名字符串（兼容 artists 数组和 artist 字符串）。"""
+    artists = song.get("artists", []) or song.get("ar", [])
+    if artists and isinstance(artists, list):
+        return ", ".join(a.get("name", "") for a in artists if a.get("name"))
+    return song.get("artist", "")
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -332,15 +494,14 @@ def _mock_init_plan(init_mode) -> dict:
     return {
         "program_state": program_state,
         "initial_playlist": initial_playlist,
-        "first_song_id": "108914",
         "welcome_text": f"你好，欢迎来到 SoulChord！今天是{today}，让我陪你度过美好的一天。先来一首林俊杰的《江南》吧。",
     }
 
 
 def _mock_conversation_decision(context: dict) -> dict:
     """Mock LLM 对 CONVERSATION 事件的 4 块输出。"""
-    # 返回前 3 首真实歌曲作为默认播放列表
-    mock_songs = [{"id": s["song_id"], "name": s["name"], "artist": s["artist"]} for s in _REAL_SONGS[:3]]
+    # 返回前 3 首真实歌曲作为默认播放列表（只含 name+artist，song_id 由代码匹配）
+    mock_songs = [{"name": s["name"], "artist": s["artist"]} for s in _REAL_SONGS[:3]]
     return {
         "program_decision": {
             "today_theme": None,
@@ -413,7 +574,7 @@ def _mock_replan_decision(context: dict) -> dict:
         "playlist_decision": {
             "action": "replace",
             "songs": [
-                {"song_id": s["song_id"], "name": s["name"], "artist": s["artist"], "scene_match": "default"}
+                {"name": s["name"], "artist": s["artist"], "scene_match": "default"}
                 for s in _REAL_SONGS
             ],
             "reason": "播放列表已空，重新生成 10 首推荐",

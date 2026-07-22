@@ -75,7 +75,7 @@ export async function fetchInit(): Promise<{
 // ---- 1.2 设置功能（APIKey 配置）----
 
 /** 获取所有服务密钥配置 */
-export async function getSettings(): Promise<{ llm_apikey: string; netease_apikey: string }> {
+export async function getSettings(): Promise<{ llm_apikey: string }> {
   const res = await http.get('/settings')
   return res.data
 }
@@ -83,7 +83,6 @@ export async function getSettings(): Promise<{ llm_apikey: string; netease_apike
 /** 增量更新 APIKey 配置 */
 export async function updateSettings(data: {
   llm_apikey?: string
-  netease_apikey?: string
 }): Promise<void> {
   await http.put('/settings', data)
 }
@@ -126,6 +125,45 @@ export async function getNeteaseStatus(): Promise<{ login_status: boolean; nickn
   return res.data
 }
 
+/** 获取当前登录用户的网易云歌单列表 */
+export async function getNeteasePlaylists(): Promise<{
+  playlists: Array<{
+    netease_id: number
+    name: string
+    song_count: number
+    cover_url: string
+    description: string
+    creator: string
+  }>
+}> {
+  const res = await http.get('/netease/playlists')
+  return res.data
+}
+
+/** 从网易云账号导入歌单到本地 */
+export async function importNeteasePlaylist(neteaseId: number): Promise<Playlist> {
+  const res = await http.post('/netease/playlist/import', { netease_id: neteaseId })
+  return res.data
+}
+
+/** 播放歌单中的指定歌曲（获取播放 URL → 返回给前端直接播放） */
+export async function playPlaylistSong(song: {
+  id: string
+  name: string
+  artists: Array<{ id: string; name: string }>
+  album?: { id: string; name: string }
+  cover_url?: string
+  duration_ms?: number
+}): Promise<{ play_url: string; song: any }> {
+  const res = await http.post('/playlist/play', song)
+  return res.data
+}
+
+/** 同步歌单队列到后端（歌单歌曲播放时调用，使 next/prev 在歌单内切换） */
+export async function syncPlaylistQueue(songs: any[]): Promise<void> {
+  await http.post('/playlist/sync-queue', { songs })
+}
+
 // ---- 1.4 歌单管理 ----
 
 /** 通过网易云歌单分享链接导入歌单 */
@@ -137,7 +175,9 @@ export async function importPlaylist(playlistUrl: string): Promise<Playlist> {
 /** 查询本地全部导入歌单 */
 export async function getPlaylists(): Promise<Playlist[]> {
   const res = await http.get('/playlist/list')
-  return res.data
+  // 后端返回 {playlists: [...]}，解包返回数组
+  const data = res.data || {}
+  return data.playlists || []
 }
 
 /** 查询单个歌单内所有歌曲详情 */
@@ -160,6 +200,25 @@ export async function updatePlaylist(playlistId: string, data: {
 /** 删除本地存储的指定歌单及歌曲缓存 */
 export async function deletePlaylist(playlistId: string): Promise<void> {
   await http.delete(`/playlist/${playlistId}`)
+}
+
+/** 新建一个空歌单 */
+export async function createPlaylist(name: string): Promise<Playlist> {
+  const res = await http.post('/playlist/create', { name })
+  return res.data
+}
+
+/** 向指定歌单添加一首歌 */
+export async function addSongToPlaylist(playlistId: string, song: {
+  id: string
+  name: string
+  artists: Array<{ id: string; name: string }>
+  album?: { id: string; name: string }
+  cover_url?: string
+  duration_ms?: number
+  fee?: number
+}): Promise<void> {
+  await http.post(`/playlist/${playlistId}/songs`, { song })
 }
 
 // ---- 1.5 AI画像 ----

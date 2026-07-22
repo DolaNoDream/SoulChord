@@ -28,12 +28,14 @@ async def router_node(state: dict) -> dict:
         next_node = "context_builder"
     elif trigger_type == "timer_event":
         next_node = "context_builder"
+    elif trigger_type == "dj_monologue":
+        next_node = "context_builder"
     elif trigger_type == "user_control":
         next_node = "action_planner"
     elif trigger_type == "system":
         next_node = "emit_response"
     elif trigger_type == "player_event":
-        if subtype in ("song_started", "song_progress"):
+        if subtype in ("song_started", "song_progress", "pause", "resume", "play_start"):
             next_node = "emit_response"
         elif subtype == "song_finished":
             next_node = "action_planner"

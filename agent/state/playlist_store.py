@@ -37,6 +37,12 @@ def get(playlist_id: str) -> Optional[dict]:
     return None
 
 
+def load_songs(playlist_id: str) -> list:
+    """查询指定歌单的歌曲列表。"""
+    data = _load_all()
+    return data.get("songs", {}).get(playlist_id, [])
+
+
 def add(playlist: dict) -> dict:
     """新增歌单，自动生成 playlist_id 和 created_at。"""
     data = _load_all()
@@ -94,6 +100,47 @@ def import_from_url(url: str) -> Optional[dict]:
         "remark": "来自网易云导入",
     }
     return add(pl)
+
+
+def add_song(playlist_id: str, song: dict) -> bool:
+    """向指定歌单添加一首歌。"""
+    data = _load_all()
+    # 确认歌单存在
+    pl = get(playlist_id)
+    if pl is None:
+        return False
+    songs = data["songs"].setdefault(playlist_id, [])
+    # 去重：检查 song_id 是否已存在
+    song_id = song.get("id", "")
+    existing_ids = {s.get("id", "") for s in songs}
+    if song_id and song_id in existing_ids:
+        return True  # 已存在，视为成功
+    songs.append(song)
+    # 更新歌单歌曲计数
+    pl["song_count"] = len(songs)
+    _save_all(data)
+    return True
+
+
+def import_from_netease(netease_id: int, name: str, songs: list, cover_url: str = "", description: str = "") -> Optional[dict]:
+    """从网易云账号导入真实歌单（含歌曲列表）。"""
+    data = _load_all()
+    pl = {
+        "playlist_id": str(uuid.uuid4()),
+        "name": name,
+        "source_url": f"https://music.163.com/playlist?id={netease_id}",
+        "netease_id": netease_id,
+        "song_count": len(songs),
+        "created_at": int(time.time() * 1000),
+        "cover_url": cover_url,
+        "description": description,
+        "remark": "来自网易云账号导入",
+    }
+    data["playlists"].append(pl)
+    if songs:
+        data["songs"][pl["playlist_id"]] = songs
+    _save_all(data)
+    return pl
 
 
 def _load_all() -> dict:

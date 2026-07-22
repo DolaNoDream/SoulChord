@@ -231,11 +231,12 @@ class TestDjPlannerInit:
         assert plan is not None
         assert "program_state" in plan
         assert "initial_playlist" in plan
-        assert "first_song_id" in plan
         assert "welcome_text" in plan
         # 验证 playlist 数量（MVP 固定 10 首 — Q12 拍板）
         assert len(plan["initial_playlist"]) == 10, "initial_playlist 应为 10 首"
-        assert result["next_node"] == "action_planner"
+        # ★ v9.1: INIT 注入 play_music 工具调用，路由到 tool_dispatcher
+        assert result["next_node"] == "tool_dispatcher", "INIT 应走 tool_dispatcher 搜索歌曲"
+        assert len(result["pending_tool_calls"]) > 0, "应注入 play_music 工具调用"
 
     @pytest.mark.asyncio
     async def test_dj_planner_non_init_passthrough(self):
@@ -283,10 +284,9 @@ class TestActionPlannerInit:
                 "program_goal": "test",
             },
             "initial_playlist": [
-                {"song_id": "1", "name": "Song A", "artist": "Artist A", "scene_match": "test"},
-                {"song_id": "2", "name": "Song B", "artist": "Artist B", "scene_match": "test"},
+                {"name": "江南", "artist": "林俊杰", "scene_match": "test"},
+                {"name": "爱错(Live)", "artist": "王力宏", "scene_match": "test"},
             ],
-            "first_song_id": "1",
             "welcome_text": "Hello, test welcome!",
         }
 
@@ -294,6 +294,30 @@ class TestActionPlannerInit:
             "trigger_type": TriggerType.SYSTEM_INIT,
             "init_mode": "first_init",
             "init_plan": init_plan,
+            "tool_messages": [
+                {
+                    "name": "play_music",
+                    "status": "ok",
+                    "result": {
+                        "query": "江南 林俊杰",
+                        "songs": [
+                            {"id": "108914", "name": "江南", "artists": [{"id": "", "name": "林俊杰"}],
+                             "album": {"id": "", "name": ""}, "cover_url": "", "duration_ms": 0, "fee": 0},
+                        ],
+                    },
+                },
+                {
+                    "name": "play_music",
+                    "status": "ok",
+                    "result": {
+                        "query": "爱错(Live) 王力宏",
+                        "songs": [
+                            {"id": "25642214", "name": "爱错(Live)", "artists": [{"id": "", "name": "王力宏"}],
+                             "album": {"id": "", "name": ""}, "cover_url": "", "duration_ms": 0, "fee": 0},
+                        ],
+                    },
+                },
+            ],
             "dependencies": {
                 "runtime_dj_state": {"current_scene": "default", "program_mood": "neutral"},
             },
@@ -313,9 +337,9 @@ class TestActionPlannerInit:
         # ④ chat.reply
         assert pending["chat_reply"] == "Hello, test welcome!"
 
-        # ⑤ music.play
+        # ⑤ music.play — LLM name/artist → 系统匹配 real song_id
         assert result["should_play_music"] is True
-        assert pending["music_play"]["song"]["id"] == "1"
+        assert pending["music_play"]["song"]["id"] == "108914"  # 江南 → real_id
         assert pending["music_play"]["auto_play"] is True
 
         # should_speak
@@ -890,15 +914,19 @@ class TestSongFinishedRouting:
                 "playlist_queue": [{"song_id": "456", "name": "Next", "artist": "A"}],
             },
             "program": {"today_theme": "测试"},
-            "dependencies": {},
-            "__refs__": {},
+            "dependencies": {
+                "runtime_dj_state": {
+                    "playlist_queue": [{"song_id": "456", "name": "Next", "artist": "A"}],
+                },
+            },
             "actions": [],
         }
 
         result = await action_planner_node(state)
 
         assert result["should_play_music"] is True
-        assert result["should_speak"] is False
+        assert result["should_speak"] is True
+        assert result.get("pending_payload", {}).get("chat_reply") is not None
         assert len(result["actions"]) == 1
         assert result["actions"][0]["type"] == "play_song"
         assert result["actions"][0]["params"]["song_id"] == "456"
@@ -924,7 +952,12 @@ class TestSongFinishedRouting:
                 "program_mood": "warm",
             },
             "program": {"today_theme": "晚间"},
-            "dependencies": {},
+            "dependencies": {
+                "runtime_dj_state": {
+                    "playlist_queue": [],
+                    "program_mood": "warm",
+                },
+            },
             "__refs__": {"event_service": svc},
             "actions": [],
         }
@@ -1087,6 +1120,117 @@ class TestSongFinishedRouting:
 
 
 # ═══════════════════════════════════════════════════════════════
+# Test Case 19: playlist_queue 低水位触发 REPLAN
+# ═══════════════════════════════════════════════════════════════
+class TestPlaylistLowWatermark:
+    """playlist_queue 低水位（≤3）时后台触发 REPLAN_REQUEST。"""
+
+    @pytest.mark.asyncio
+    async def test_low_watermark_triggers_replan(self):
+        """queue=4 → 消费后 queue=3 ≤ 3 → 推 REPLAN_REQUEST（不中断播放）。"""
+        from unittest.mock import patch
+        from agent.nodes.action_planner import action_planner_node
+        from agent.services.event_service import EventService
+        from agent.runtime.event_queue import EventQueue
+
+        q = EventQueue()
+        svc = EventService()
+        svc.bind(q)
+
+        state = {
+            "trigger_type": "player_event",
+            "trigger_event": {"subtype": "song_finished", "song_id": "old"},
+            "runtime_snapshot": {
+                "playlist_queue": [
+                    {"song_id": "a1", "name": "A", "artist": "a"},
+                    {"song_id": "b2", "name": "B", "artist": "b"},
+                    {"song_id": "c3", "name": "C", "artist": "c"},
+                    {"song_id": "d4", "name": "D", "artist": "d"},
+                ],
+            },
+            "dependencies": {
+                "runtime_dj_state": {
+                    "playlist_queue": [
+                        {"song_id": "a1", "name": "A", "artist": "a"},
+                        {"song_id": "b2", "name": "B", "artist": "b"},
+                        {"song_id": "c3", "name": "C", "artist": "c"},
+                        {"song_id": "d4", "name": "D", "artist": "d"},
+                    ],
+                },
+            },
+            "__refs__": {"event_service": svc},
+            "actions": [],
+            "program": {"today_theme": "测试"},
+        }
+
+        with patch("agent.nodes.action_planner.state_manager.player.update_player_event",
+                    return_value=None):
+            result = await action_planner_node(state)
+
+        # 播放下一首歌
+        assert result["should_play_music"] is True
+        assert result["actions"][0]["type"] == "play_song"
+        assert result["actions"][0]["params"]["song_id"] == "a1"
+        # ★ v9.5.3: 歌间也有 chat_reply（低水位时用"再去找些更合适的"版本）
+        assert result["should_speak"] is True
+        assert result.get("pending_payload", {}).get("chat_reply") is not None
+
+        # REPLAN_REQUEST 被推送（低水位）
+        assert q.qsize() == 1, "低水位应推送 REPLAN_REQUEST"
+        replan_event = await q.get()
+        assert "low_watermark" in replan_event.payload.get("reason", "")
+
+    @pytest.mark.asyncio
+    async def test_no_watermark_above_threshold(self):
+        """queue=5 → 消费后 queue=4 > 3 → 不触发低水位 REPLAN。"""
+        from unittest.mock import patch
+        from agent.nodes.action_planner import action_planner_node
+        from agent.services.event_service import EventService
+        from agent.runtime.event_queue import EventQueue
+
+        q = EventQueue()
+        svc = EventService()
+        svc.bind(q)
+
+        state = {
+            "trigger_type": "player_event",
+            "trigger_event": {"subtype": "song_finished", "song_id": "old"},
+            "runtime_snapshot": {
+                "playlist_queue": [
+                    {"song_id": "a1", "name": "A", "artist": "a"},
+                    {"song_id": "b2", "name": "B", "artist": "b"},
+                    {"song_id": "c3", "name": "C", "artist": "c"},
+                    {"song_id": "d4", "name": "D", "artist": "d"},
+                    {"song_id": "e5", "name": "E", "artist": "e"},
+                ],
+            },
+            "dependencies": {
+                "runtime_dj_state": {
+                    "playlist_queue": [
+                        {"song_id": "a1", "name": "A", "artist": "a"},
+                        {"song_id": "b2", "name": "B", "artist": "b"},
+                        {"song_id": "c3", "name": "C", "artist": "c"},
+                        {"song_id": "d4", "name": "D", "artist": "d"},
+                        {"song_id": "e5", "name": "E", "artist": "e"},
+                    ],
+                },
+            },
+            "__refs__": {"event_service": svc},
+            "actions": [],
+            "program": {"today_theme": "测试"},
+        }
+
+        with patch("agent.nodes.action_planner.state_manager.player.update_player_event",
+                    return_value=None):
+            result = await action_planner_node(state)
+
+        # 播放下一首歌，但不触发低水位
+        assert result["should_play_music"] is True
+        # queue 消费后剩余 4 > 3 → 不推 REPLAN
+        assert q.qsize() == 0, "高于低水位不应推送 REPLAN"
+
+
+# ═══════════════════════════════════════════════════════════════
 # Test Case 16: AgentState — 字段定义
 # ═══════════════════════════════════════════════════════════════
 class TestAgentState:
@@ -1246,7 +1390,11 @@ class TestStateGraphRouting:
                 "trigger_event": {"subtype": "song_finished", "song_id": "123"},
                 "init_mode": "resume",
                 "runtime_snapshot": {"playlist_queue": [{"song_id": "456", "name": "Next"}]},
-                "dependencies": {},
+                "dependencies": {
+                    "runtime_dj_state": {
+                        "playlist_queue": [{"song_id": "456", "name": "Next"}],
+                    },
+                },
                 "__refs__": {},
                 "messages": [],
                 "tool_messages": [],

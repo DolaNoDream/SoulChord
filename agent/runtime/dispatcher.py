@@ -31,12 +31,13 @@ class EventDispatcher:
     Graph 内部路由由 StateGraph 的 Node + conditional edge 处理。
     """
 
-    def __init__(self, event_queue: EventQueue, runtime_dj_state: dict, llm_service=None):
+    def __init__(self, event_queue: EventQueue, runtime_dj_state: dict, llm_service=None, dj_host_service=None):
         self._queue = event_queue
         self._running = False
         self._task: Optional[asyncio.Task] = None
         self.runtime_dj_state = runtime_dj_state
         self._llm_service = llm_service
+        self._dj_host_service = dj_host_service
         state_manager.runtime_dj_state = runtime_dj_state
 
     async def run(self):
@@ -46,7 +47,9 @@ class EventDispatcher:
         while self._running:
             try:
                 event = await self._queue.get()
-                asyncio.create_task(self._handle(event))
+                # ★ P0-1: 单线程串行消费 — 禁止并发 Graph invoke
+                #   事件必须逐个处理，避免 playlist_queue / RDS 竞争
+                await self._handle(event)
             except asyncio.CancelledError:
                 break
             except Exception as e:
@@ -99,6 +102,7 @@ class EventDispatcher:
             "__refs__": {
                 "event_service": event_service,
                 "llm_service": self._llm_service,
+                "dj_host_service": self._dj_host_service,
             },
             "messages": [],
             "tool_messages": [],
@@ -171,5 +175,6 @@ def _map_event_type_to_trigger(event_type) -> str:
         "timer_program_tick": "timer_event",
         "user_control": "user_control",
         "system": "system",
+        "dj_monologue": "dj_monologue",
     }
     return mapping.get(event_type.value if hasattr(event_type, 'value') else str(event_type), "system")

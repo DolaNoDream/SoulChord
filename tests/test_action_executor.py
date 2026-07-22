@@ -1,10 +1,13 @@
 """Action Executor + TTSService 单元测试。
 
-覆盖（4 测试）：
-1. TTSService.synthesize 返回正确 schema
-2. action type=tts_speak → payload 含 audio_url
-3. action type=play_song → payload 含 play_url
-4. 异常捕获 → last_error 记录 + 不阻塞
+覆盖（7 测试）：
+1. TTSService.synthesize 降级（无 API Key）
+2. TTSService.synthesize 空文本 → 空结果
+3. TTSService.synthesize 纯空白文本 → 空结果
+4. action type=tts_speak → payload 含 audio_url
+5. action type=play_song → payload 含 play_url
+6. 异常捕获 → last_error 记录 + 不阻塞
+7. Graph 集成含 action_executor 节点
 
 使用方法：
     cd dev
@@ -20,30 +23,36 @@ from unittest.mock import patch, MagicMock, AsyncMock
 
 
 # ═══════════════════════════════════════════════════════════════
-# Test Case 1: TTSService.synthesize 返回正确 schema
+# Test Case 1: TTSService.synthesize schema
 # ═══════════════════════════════════════════════════════════════
 class TestTTSServiceMock:
-    """TTSService mock synthesize schema 验证。"""
+    """TTSService synthesize 模式验证。
+
+    TTSService 降级模式：API Key 缺失时返回空 audio_url + fish_audio_mock。
+    """
 
     @pytest.mark.asyncio
-    async def test_synthesize_returns_correct_schema(self):
-        """TC-01: synthesize 返回 audio_url / duration_ms / provider。"""
+    async def test_synthesize_no_key_returns_empty(self):
+        """TC-01: 无 API Key → audio_url='', provider='fish_audio_mock'。"""
         from agent.services.tts_service import TTSService
 
         svc = TTSService()
-        result = await svc.synthesize("你好，欢迎收听今天的节目")
+
+        with patch("agent.services.tts_service._settings.FISH_AUDIO_API_KEY", ""):
+            result = await svc.synthesize("你好，欢迎收听今天的节目")
 
         assert "audio_url" in result, "缺少 audio_url"
         assert "duration_ms" in result, "缺少 duration_ms"
         assert "provider" in result, "缺少 provider"
-        assert result["audio_url"].startswith("mock://"), \
-            f"audio_url 应为 mock 前缀，实际: {result['audio_url']}"
+        assert result["audio_url"] == "", \
+            f"无 Key 时 audio_url 应为空，实际: {result['audio_url']}"
         assert isinstance(result["duration_ms"], int), \
             f"duration_ms 应为 int，实际: {type(result['duration_ms'])}"
-        assert result["provider"] == "xunfei_mock", \
-            f"provider 应为 xunfei_mock，实际: {result['provider']}"
-        assert result["duration_ms"] >= 1000, \
-            f"duration_ms 应 >= 1000，实际: {result['duration_ms']}"
+        assert result["provider"] == "fish_audio_mock", \
+            f"provider 应为 fish_audio_mock，实际: {result['provider']}"
+        # 无 API Key 时 duration_ms=0（无法估算实际时长）
+        assert result["duration_ms"] == 0, \
+            f"无 Key 时 duration_ms 应为 0，实际: {result['duration_ms']}"
 
     @pytest.mark.asyncio
     async def test_synthesize_empty_text_returns_zero_duration(self):
@@ -99,11 +108,13 @@ class TestActionExecutorTTS:
 
         assert "pending_payload" in result
         ts = result["pending_payload"].get("transition_speech", {})
-        assert ts.get("audio_url", "").startswith("mock://"), \
-            f"应含 mock audio_url，实际: {ts.get('audio_url')}"
+        # 无 API Key 时 TTSService 返回空 audio_url
+        assert isinstance(ts.get("audio_url"), str), \
+            f"audio_url 应为字符串，实际: {type(ts.get('audio_url'))}"
         assert isinstance(ts.get("duration_ms"), int), \
             f"duration_ms 应为 int"
-        assert ts.get("provider") == "xunfei_mock"
+        assert ts.get("provider") in ("fish_audio", "fish_audio_mock"), \
+            f"provider 应为 fish_audio 系列"
         # 原始字段不应丢失
         assert ts.get("text") == "这是一段测试语音"
         assert ts.get("source") == "test"

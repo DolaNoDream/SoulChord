@@ -104,7 +104,7 @@ async function handleAnalyze() {
   display: flex; flex-direction: column; height: 100%; padding: 12px; overflow-y: auto;
 
   &__header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;
-    h3 { font-size: $font-size-lg; color: $text-primary; margin: 0; font-weight: 700; }
+    h3 { font-size: $font-size-lg; color: var(--text-primary); margin: 0; font-weight: 700; }
   }
   &__analyze-btn { padding: 6px 14px; background: rgba($accent-primary, 0.1);
     border: 1px solid rgba($accent-primary, 0.3); border-radius: $radius-full;
@@ -112,20 +112,20 @@ async function handleAnalyze() {
     &:hover:not(:disabled) { background: rgba($accent-primary, 0.2); }
     &:disabled { opacity: 0.5; cursor: not-allowed; }
   }
-  &__loading { padding: 24px; text-align: center; color: $text-muted; }
+  &__loading { padding: 24px; text-align: center; color: var(--text-muted); }
   &__content { display: flex; flex-direction: column; gap: 20px; }
 
   &__section { background: $bg-glass; border: 1px solid $border-subtle;
     border-radius: $radius-md; padding: 14px 16px; }
-  &__section-title { font-size: $font-size-sm; color: $text-secondary; margin: 0 0 12px;
+  &__section-title { font-size: $font-size-sm; color: var(--text-secondary); margin: 0 0 12px;
     font-weight: 600; display: flex; align-items: center; gap: 8px; }
   &__readonly-tag { font-size: 10px; padding: 1px 6px; background: rgba($accent-warm, 0.15);
     color: $accent-warm; border-radius: $radius-full; font-weight: 400; }
 
   &__field { margin-bottom: 12px; &:last-child { margin-bottom: 0; } }
-  &__label { font-size: $font-size-xs; color: $text-muted; display: block; margin-bottom: 4px; }
-  &__value { font-size: $font-size-sm; color: $text-primary;
-    &--time { color: $text-muted; font-size: $font-size-xs; }
+  &__label { font-size: $font-size-xs; color: var(--text-muted); display: block; margin-bottom: 4px; }
+  &__value { font-size: $font-size-sm; color: var(--text-primary);
+    &--time { color: var(--text-muted); font-size: $font-size-xs; }
   }
 
   &__tags { display: flex; flex-wrap: wrap; gap: 6px; }
@@ -137,8 +137,8 @@ async function handleAnalyze() {
     &--dislike { background: rgba(#ef4444, 0.1); color: #f87171;
       border: 1px solid rgba(#ef4444, 0.15); }
   }
-  &__nodata { font-size: 11px; color: $text-muted; font-style: italic; }
-  &__desc { font-size: $font-size-sm; color: $text-secondary; line-height: 1.6; margin: 0;
+  &__nodata { font-size: 11px; color: var(--text-muted); font-style: italic; }
+  &__desc { font-size: $font-size-sm; color: var(--text-secondary); line-height: 1.6; margin: 0;
     &--conclusion { color: $accent-warm; font-style: italic; font-size: $font-size-base; } }
 }
 </style>

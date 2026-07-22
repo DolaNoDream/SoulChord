@@ -28,13 +28,22 @@ CONVERSATION_PROMPT = """你是 SoulChord AI DJ，一个通过对话和音乐陪
 {playback_info}
 
 【可用 DJ 工具】
-1. play_music — 播放指定歌曲。必须提供 query（歌曲名/歌手名），不允许编造 song_id。参数：{{"query": "搜索关键词", "song_id": "已知ID（可选）"}}
+1. play_music — 播放指定歌曲。必须提供 query（歌曲名/歌手名）。song_id 由工具搜索返回，不要自己编造。参数：{{"query": "搜索关键词"}}
 2. manage_playlist — 管理播放列表
 3. get_environment_context — 获取环境信息（天气/时间/位置/活动）
 4. query_user_preference — 查询用户偏好和记忆
 5. update_memory — 更新用户记忆
 6. query_calendar — 查询飞书日程
 {replan_extra}
+
+【playlist_decision.action 选择规则】
+- insert_now：用户明确要求播放某首歌（"放一首XX"、"播放XX"、"我想听XX"）。只输出那首歌，不加其他歌曲。
+- append：你想推荐几首歌给用户，或者在现有节目基础上补充歌曲。
+- replace：用户要求换节目（"换点别的"、"今天想听XX风格"），或者当前节目需要整体更换。
+- keep：只是聊天，不需要改变播放列表。
+
+【重要：song_id 不要出现在你的输出中！】
+你输出的歌曲只有 name 和 artist，song_id 由 play_music 工具搜索返回。如果你在 tool_calls 中请求了 play_music 搜索，系统会自动匹配搜索结果中的真实 song_id。
 
 请严格按以下 JSON 格式输出，不要添加多余文本，不在 JSON 外包 markdown 代码块：
 
@@ -49,9 +58,9 @@ CONVERSATION_PROMPT = """你是 SoulChord AI DJ，一个通过对话和音乐陪
     "speak_frequency": "string 或 null（low/medium/high）"
   }},
   "playlist_decision": {{
-    "action": "string（keep/replace/add）",
+    "action": "string（keep/replace/append/insert_now）",
     "songs": [
-      {{"song_id": "string", "name": "string", "artist": "string", "scene_match": "string"}}
+      {{"name": "string", "artist": "string", "scene_match": "string"}}
     ],
     "reason": "string"
   }},
@@ -129,7 +138,13 @@ def _build_playback_info(context: dict) -> str:
     queue = mirror.get("playlist_queue", []) or snap.get("playlist_queue", [])
     parts.append(f"队列余量：{len(queue)} 首")
     is_playing = mirror.get("is_playing", snap.get("is_playing", False))
-    parts.append(f"播放状态：{'播放中' if is_playing else '已暂停'}")
+    has_current = bool(current_name)
+    if not has_current:
+        parts.append("播放状态：未播放")
+    elif is_playing:
+        parts.append("播放状态：播放中")
+    else:
+        parts.append("播放状态：已暂停")
     return "\n".join(parts)
 
 
@@ -156,8 +171,8 @@ def format_conversation_prompt(context: dict, replan_reason: str = "") -> str:
         replan_extra = (
             "\n【额外说明】\n"
             f"当前为 REPLAN 事件：{replan_reason}。\n"
-            "请先使用 play_music 工具搜索真实歌曲，不要直接编造 song_id。\n"
-            "步骤：先输出 tool_calls → 执行搜索 → 在下一轮根据搜索结果输出 playlist_decision 中的真实 song_id。"
+            "请先使用 play_music 工具搜索真实歌曲（输出 tool_calls）。\n"
+            "步骤：先输出 tool_calls → 执行搜索 → 在下一轮根据搜索结果输出 playlist_decision（只含 name+artist，song_id 由系统自动匹配）。"
         )
 
     return CONVERSATION_PROMPT.format(
