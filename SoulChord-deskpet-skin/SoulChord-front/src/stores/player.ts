@@ -423,7 +423,7 @@ export const usePlayerStore = defineStore('player', () => {
     currentSong, playUrl, playReason, queue, history, isPlaying, volume, currentTime, duration,
     playbackMode, isMuted, isLoading, currentExpression,
     progress, currentSongIndex, hasNext, hasPrevious, isLiked, formattedProgress, formattedDuration,
-    isPlaylistMode, setPlaylistMode,
+    isPlaylistMode, setPlaylistMode, audioElement,
     initAudio, playSong, playPlaylist, togglePlay, next, prev, seekTo, setVolume, toggleMute,
     setPlaybackMode, addToQueue, removeFromQueue, clearQueue, toggleLike, dislike, reportPlayEnd, restoreFromCache,
     onSongEnded,

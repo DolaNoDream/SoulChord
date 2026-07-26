@@ -4,6 +4,7 @@
   1. normalize_song_name() — 归一化歌名
   2. pick_best_song() — 从搜索结果中选出最佳版本
   3. dedup_candidates() — 队列去重
+  4. resolve() — (v9.14) 多 Provider 搜索结果融合：normalize → merge → rank
 
 核心原则（v9.1）：
   LLM 负责"想播放什么" → Tool 负责"找到什么" → Resolver 负责"最终播放哪个"
@@ -313,6 +314,71 @@ def pick_best_song(
     return best
 
 
+def _extract_first_artist(song: dict) -> str:
+    """从 song dict 中提取首位歌手名。
+
+    支持格式：
+      - {"artists": [{"name": "..."}]}     ← 搜索结果
+      - {"artists": ["..."]}               ← ProviderSearchResult
+      - {"artist": "..."}                  ← _to_queue_songs 简化格式
+    """
+    # 1) artists 列表（搜索结果格式）
+    artists = song.get("artists") or song.get("ar") or []
+    if isinstance(artists, list) and artists:
+        first = artists[0]
+        if isinstance(first, dict):
+            return (first.get("name") or first.get("nickname") or "").strip()
+        return str(first).strip()
+
+    # 2) artist 字符串（队列简化格式）
+    artist_str = song.get("artist", "")
+    if artist_str:
+        return artist_str.split(",")[0].strip()
+    return ""
+
+
+def normalize_title(song: dict) -> str:
+    """清洗歌曲标题：去版本后缀 + 去歌手前缀（仅当前缀匹配首位歌手时）。
+
+    例如：
+      {name: "买辣椒也用券-起风了（小7 remix）", artists: [...]}
+        → 去版本 → "买辣椒也用券-起风了"
+        → 检查前缀 "买辣椒也用券-" → 匹配 → "起风了"
+
+      {name: "Love Story", artists: ["Taylor Swift"]}
+        → 去版本 → "love story"
+        → 检查前缀 "taylor swift-" → 不匹配 → "love story"
+    """
+    title = (song.get("name") or "").strip()
+    if not title:
+        return ""
+
+    # 1) 去版本后缀 + 小写（复用 normalize_song_name）
+    title = normalize_song_name(title)
+
+    # 2) 去歌手前缀（仅当前缀 == 首位歌手时）
+    artist = _extract_first_artist(song)
+    if artist:
+        artist_lower = artist.lower().strip()
+        prefix = artist_lower + "-"
+        if title.startswith(prefix):
+            title = title[len(prefix):].strip()
+
+    return title
+
+
+def build_song_dedup_key(song: dict) -> tuple[str, str]:
+    """构建去重 key = (归一化标题, 归一化首位歌手)。
+
+    确保：
+      - QQ 和网易云的同一首歌去重 key 相同
+      - 不同歌手的同名歌曲不被去重
+    """
+    title = normalize_title(song)
+    artist = _extract_first_artist(song)
+    return (title, _normalize_artist(artist))
+
+
 def dedup_candidates(
     candidates: list[dict],
     existing_queue: list[dict] | None = None,
@@ -320,26 +386,20 @@ def dedup_candidates(
 ) -> list[dict]:
     """对候选歌曲去重。
 
-    去重规则（v9.1 Song Resolver 版）：
+    去重规则（v9.15 升级版）：
       1. song_id 已在现有队列中 → 跳过
-      2. **归一化歌名** 已在现有队列中 → 跳过（不管歌手、版本）
-      3. 同一归一化歌名在候选列表中只保留第一个
+      2. **(归一化标题, 归一化歌手)** 已在现有队列中 → 跳过
+         - 标题先去版本后缀，再去歌手前缀（仅当前缀匹配首位歌手）
+      3. 同一 (标题, 歌手) 在候选列表中只保留第一个
 
-    ★ 仅使用归一化歌名作为唯一 key（不区分歌手/版本），
-      因为播放列表面板场景下同一首歌不同版本/翻唱不应该重复出现。
-
-    参数：
-      candidates: 候选歌曲 list（搜索结果原始格式）
-      existing_queue: 现有队列（_to_queue_songs 后的格式）
-      current_song_id: 当前正在播放的 song_id（排除）
-
-    返回：去重后的候选列表（保留原始 dict，非 to_queue_songs 格式）
+    ★ 使用 (归一化标题, 归一化歌手) 作为唯一 key，
+      确保 QQ 和网易云同一首歌在不同 name 格式下也能去重。
     """
     if not candidates:
         return []
 
-    # 收集现有队列的归一化歌名 set
-    seen_names: set[str] = set()
+    # 收集现有队列的 dedup key set
+    seen_keys: set[tuple[str, str]] = set()
     seen_ids: set[str] = set()
 
     if existing_queue:
@@ -347,37 +407,153 @@ def dedup_candidates(
             sid = s.get("song_id", "") or s.get("id", "")
             if sid:
                 seen_ids.add(sid)
-            nname = normalize_song_name(s.get("name", ""))
-            if nname:
-                seen_names.add(nname)
+            key = build_song_dedup_key(s)
+            if key[0]:
+                seen_keys.add(key)
 
     if current_song_id:
         seen_ids.add(current_song_id)
 
     # 候选列表自身去重
     result: list[dict] = []
-    self_seen: set[str] = set()
+    self_seen: set[tuple[str, str]] = set()
 
     for s in candidates:
         sid = s.get("id", "") or s.get("song_id", "")
-        song_name = s.get("name", "") or ""
-
-        nname = normalize_song_name(song_name)
+        key = build_song_dedup_key(s)
 
         # 1) song_id 已存在
         if sid and sid in seen_ids:
             continue
-        # 2) 归一化歌名已在现有队列
-        if nname and nname in seen_names:
+        # 2) (标题, 歌手) 已在现有队列
+        if key[0] and key in seen_keys:
             continue
-        # 3) 同一归一化歌名已在本次候选列表
-        if nname and nname in self_seen:
+        # 3) 同一 (标题, 歌手) 已在本次候选列表
+        if key[0] and key in self_seen:
             continue
 
         seen_ids.add(sid) if sid else None
-        if nname:
-            seen_names.add(nname)
-            self_seen.add(nname)
+        if key[0]:
+            seen_keys.add(key)
+            self_seen.add(key)
         result.append(s)
 
     return result
+
+
+def _merge_key(result) -> tuple[str, str]:
+    """生成跨 Provider 的合并 key = (归一化歌名, 归一化首歌手名)。
+
+    将 "夜曲" + "周杰伦" 和 "夜曲" + "Jay Chou" 视为同一首歌。
+    """
+    name = normalize_song_name(result.name if hasattr(result, 'name') else (result.get("name", "") or ""))
+    artists_raw = result.artists if hasattr(result, 'artists') else (result.get("artists", []) or [])
+    first_artist = ""
+    if isinstance(artists_raw, list):
+        for a in artists_raw:
+            aname = a.get("name", "") if isinstance(a, dict) else str(a)
+            if aname:
+                first_artist = aname
+                break
+    elif isinstance(artists_raw, str):
+        first_artist = artists_raw
+    return (name, _normalize_artist(first_artist))
+
+
+def resolve(
+    provider_results: dict[str, list["ProviderSearchResult"]],
+    default_provider: str = "netease",
+) -> list[dict]:
+    """多 Provider 搜索结果融合入口：normalize → merge → rank。
+
+    Args:
+        provider_results: {provider_name: [ProviderSearchResult, ...]}
+        default_provider: 默认 Provider，其 platform_id 作为 Song.id。
+
+    Returns:
+        融合排序后的 Song dict 列表（兼容现有 Song 格式）。
+    """
+    # 延迟导入避免循环依赖
+    from agent.config import settings
+
+    dp = default_provider or settings.DEFAULT_PROVIDER
+
+    # 1) 展平 + 按 merge_key 分组
+    groups: dict[tuple[str, str], list[dict]] = {}
+    for provider_name, results in provider_results.items():
+        for r in results:
+            rdict = _result_to_dict(r)
+            key = _merge_key(rdict)
+            if not key[0]:
+                continue
+            groups.setdefault(key, []).append(rdict)
+
+    if not groups:
+        return []
+
+    # 2) 对每个 group：评分 + 选最佳 + 合并 sources
+    merged: list[tuple[int, dict]] = []  # (score, song_dict)
+
+    for key, items in groups.items():
+        # 评分（version penalty + provider 偏好）
+        scored = []
+        for i, item in enumerate(items):
+            vtype = _detect_version_type(item["name"])
+            penalty = _VERSION_PENALTIES.get(vtype, 0)
+            # 原版 +0，Live -15，Cover -30
+            base_score = 100
+            if vtype == "original":
+                base_score = 100
+            provider_bonus = 0
+            if item["_provider"] == dp:
+                provider_bonus = 5
+            total = base_score - penalty + provider_bonus
+            scored.append((total, i, item))
+
+        scored.sort(key=lambda x: (-x[0], x[1]))
+        best = scored[0][2]
+
+        # 合并 sources
+        sources = []
+        for item in items:
+            sources.append({
+                "provider": item["_provider"],
+                "platform_id": item["platform_id"],
+                "platform_mid": item.get("platform_mid"),
+                "play_available": True,
+            })
+
+        # 构建对外 Song dict
+        song_out = {
+            "id": best["platform_id"] if best["_provider"] == dp else (items[0]["platform_id"] if items else ""),
+            "provider": dp,
+            "platform_id": best["platform_id"],
+            "platform_mid": best.get("platform_mid"),
+            "name": best["name"],
+            "artists": best["artists"],
+            "album": best["album"],
+            "cover_url": best["cover_url"],
+            "duration_ms": best["duration_ms"],
+            "fee": best["fee"],
+            "sources": sources,
+        }
+        merged.append((scored[0][0], song_out))
+
+    # 3) 按分数降序排列
+    merged.sort(key=lambda x: -x[0])
+    return [item for _, item in merged]
+
+
+def _result_to_dict(r: "ProviderSearchResult") -> dict:
+    """ProviderSearchResult → 临时 dict（含 _provider 标记）。"""
+    return {
+        "_provider": r.provider,
+        "platform_id": r.platform_id,
+        "platform_mid": r.platform_mid,
+        "name": r.name,
+        "artists": r.artists,
+        "album": r.album,
+        "cover_url": r.cover_url,
+        "duration_ms": r.duration_ms,
+        "fee": r.fee,
+    }

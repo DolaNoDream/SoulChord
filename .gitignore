@@ -63,3 +63,7 @@ runtime*.log
 main.py
 NEXT_SESSION_PROMPT.md
 api/QQMusicApi-main/
+
+# === 构建产物 ===
+build/
+dist_py/

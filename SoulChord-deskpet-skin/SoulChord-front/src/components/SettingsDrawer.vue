@@ -2,7 +2,7 @@
 import { ref, watch, onUnmounted } from 'vue'
 import { useUserStore } from '@/stores/user'
 import { useSettingsStore } from '@/stores/settings'
-import { getSettings, postNeteasePhoneLogin, getNeteaseQrKey, getNeteaseQrCreate, postNeteaseQrCheck } from '@/api/agent'
+import { getSettings, postNeteasePhoneLogin, getNeteaseQrKey, getNeteaseQrCreate, postNeteaseQrCheck, getQqQrcode, getQqQrcodeStatus } from '@/api/agent'
 import { ElMessage } from 'element-plus'
 
 const props = defineProps<{ visible: boolean }>()
@@ -37,6 +37,22 @@ const isGettingQr = ref(false)
 let qrPollTimer: ReturnType<typeof setInterval> | null = null
 
 const isLoggingIn = ref(false)
+
+// ===== QQ 音乐登录 =====
+const qqLoginDialogVisible = ref(false)
+const qqQrImg = ref('')
+const qqIdentifier = ref('')
+const qqQrStatus = ref<'idle' | 'waiting' | 'scanning' | 'confirmed' | 'expired'>('idle')
+const isGettingQqQr = ref(false)
+let qqPollTimer: ReturnType<typeof setInterval> | null = null
+
+const qqQrStatusText: Record<string, string> = {
+  idle: '点击获取二维码',
+  waiting: '请使用 QQ 音乐扫码',
+  scanning: '已扫码，请在手机上确认',
+  confirmed: '登录成功！',
+  expired: '二维码已过期，请重新获取',
+}
 
 const qrStatusText: Record<string, string> = {
   idle: '点击获取二维码',
@@ -217,8 +233,63 @@ async function handleGetQr() {
   }
 }
 
+// ===== QQ 音乐登录 =====
+function openQqLoginDialog() {
+  qqLoginDialogVisible.value = true
+  resetQqQrState()
+}
+
+function resetQqQrState() {
+  qqQrImg.value = ''
+  qqIdentifier.value = ''
+  qqQrStatus.value = 'idle'
+  if (qqPollTimer) {
+    clearInterval(qqPollTimer)
+    qqPollTimer = null
+  }
+}
+
+async function handleGetQqQr() {
+  if (isGettingQqQr.value) return
+  isGettingQqQr.value = true
+  try {
+    const res = await getQqQrcode()
+    qqIdentifier.value = res.identifier
+    qqQrImg.value = res.img  // res.img is already a data URL
+    qqQrStatus.value = 'waiting'
+
+    if (qqPollTimer) clearInterval(qqPollTimer)
+    qqPollTimer = setInterval(async () => {
+      try {
+        const status = await getQqQrcodeStatus(qqIdentifier.value)
+        if (status.event === 0) {
+          // DONE=0: 登录成功
+          if (qqPollTimer) { clearInterval(qqPollTimer); qqPollTimer = null }
+          qqQrStatus.value = 'confirmed'
+          settingsStore.setQqStatus(true, 'QQ 用户')
+          qqLoginDialogVisible.value = false
+          ElMessage.success('QQ 扫码登录成功')
+        } else if (status.event === 1) {
+          qqQrStatus.value = 'waiting'
+        } else if (status.event === 2) {
+          qqQrStatus.value = 'scanning'
+        } else if (status.event === 3 || status.event === 4) {
+          // TIMEOUT=3 or REFUSE=4
+          if (qqPollTimer) { clearInterval(qqPollTimer); qqPollTimer = null }
+          qqQrStatus.value = 'expired'
+        }
+      } catch { /* continue polling */ }
+    }, 2000)
+  } catch (e) {
+    ElMessage.error(e instanceof Error ? e.message : '获取 QQ 二维码失败')
+  } finally {
+    isGettingQqQr.value = false
+  }
+}
+
 onUnmounted(() => {
   if (qrPollTimer) clearInterval(qrPollTimer)
+  if (qqPollTimer) clearInterval(qqPollTimer)
 })
 
 </script>
@@ -320,6 +391,42 @@ onUnmounted(() => {
         </button>
       </div>
 
+      <!-- QQ 音乐账号登录 -->
+      <div class="settings-drawer__section">
+        <h4 class="settings-drawer__section-title">🔗 QQ 音乐账号</h4>
+        <div class="settings-drawer__netease-status">
+          <span v-if="settingsStore.qqLoginStatus" class="settings-drawer__netease-loggedin">
+            ✅ 已登录：{{ settingsStore.qqNickname || 'QQ 用户' }}
+          </span>
+          <span v-else class="settings-drawer__netease-notlogin">
+            ⚠️ 未登录 — QQ 音乐部分功能受限
+          </span>
+        </div>
+        <button class="settings-drawer__login-btn" @click="openQqLoginDialog">
+          {{ settingsStore.qqLoginStatus ? '切换账号' : '登录 QQ 音乐账号' }}
+        </button>
+      </div>
+
+      <!-- QQ 音乐扫码登录弹窗 -->
+      <div v-if="qqLoginDialogVisible" class="import-dialog-overlay" @click.self="qqLoginDialogVisible = false">
+        <div class="import-dialog">
+          <h4>QQ 音乐扫码登录</h4>
+          <p class="import-dialog__hint">登录后 QQ 音乐来源的歌曲可获得完整播放权限</p>
+          <div class="settings-drawer__login-form">
+            <div v-if="qqQrStatus === 'idle' || qqQrStatus === 'expired'" class="settings-drawer__qr-placeholder">
+              <button class="settings-drawer__qr-btn" :disabled="isGettingQqQr" @click="handleGetQqQr">{{ isGettingQqQr ? '获取中...' : '获取二维码' }}</button>
+            </div>
+            <div v-else class="settings-drawer__qr-display">
+              <img :src="qqQrImg" class="settings-drawer__qr-img" alt="QQ QR code" />
+              <p class="settings-drawer__qr-status">{{ qqQrStatusText[qqQrStatus] }}</p>
+            </div>
+            <div class="import-dialog__actions">
+              <button class="import-dialog__btn import-dialog__btn--cancel" @click="qqLoginDialogVisible = false">取消</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <!-- 网易云登录弹窗 -->
       <div v-if="loginDialogVisible" class="import-dialog-overlay" @click.self="loginDialogVisible = false">
         <div class="import-dialog">
@@ -352,7 +459,6 @@ onUnmounted(() => {
             <div v-else class="settings-drawer__qr-display">
               <img :src="'data:image/png;base64,' + qrImg" class="settings-drawer__qr-img" alt="QR code" />
               <p class="settings-drawer__qr-status">{{ qrStatusText[qrStatus] }}</p>
-              <button v-if="qrStatus === 'expired'" class="settings-drawer__qr-btn" @click="handleGetQr">重新获取</button>
             </div>
             <div class="import-dialog__actions">
               <button class="import-dialog__btn import-dialog__btn--cancel" @click="loginDialogVisible = false">取消</button>

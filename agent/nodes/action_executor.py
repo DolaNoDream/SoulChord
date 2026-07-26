@@ -12,18 +12,12 @@ set_volume	预留 P1	—
 """
 
 import copy
-import json
 import logging
-import os
-import urllib.parse
 
 from agent.services.tts_service import TTSService, tts_service as _tts
-from agent.services.music_service import MusicService
+from agent.services.play_service import play_service
 
 logger = logging.getLogger(__name__)
-
-# 模块级 Service 实例（非 Tool 层，不需要经 adapter）
-_music = MusicService()
 
 
 async def action_executor_node(state: dict) -> dict:
@@ -114,64 +108,40 @@ async def _exec_tts(pending_payload: dict, params: dict) -> dict | None:
 
 
 async def _exec_play(pending_payload: dict, params: dict) -> dict | None:
-    """执行 play_song action。"""
+    """执行 play_song action → 委托 PlayService。
+
+    PlayService 负责：
+      - SourceSelector + Provider 多源解析
+      - 代理 URL 构建
+      - 播放历史记录 + player_mirror
+    本函数只将结果写回 pending_payload，供 EmitResponse 消费。
+    """
     song_id = params.get("song_id", "")
     if not song_id:
         logger.warning("ActionExecutor: play_song with empty song_id, skip")
         return None
 
     try:
-        play_url = await _music.get_play_url(song_id)
-        if not play_url:
+        # 构造 song dict（可能从 params 或 pending_payload 取）
+        song = pending_payload.get("music_play", {}).get("song", {})
+        if not song.get("id"):
+            song["id"] = song_id
+
+        result = await play_service.play(song)
+        if not result:
             logger.error("ActionExecutor: play_url is None for song=%s", song_id)
             return {"code": "PLAY_URL_NOT_FOUND", "message": f"No playable URL for {song_id}"}
 
-        # ★ 将原始 CDN URL 转为代理 URL，解决前端 CORS / 跨域问题
-        from agent.config import settings as _settings
-        encoded = urllib.parse.quote(play_url, safe="")
-        proxy_url = f"http://localhost:{_settings.AGENT_PORT}/api/proxy/audio?url={encoded}"
-
-        # enrich music_play
+        # enrich music_play（供 EmitResponse 发送 WS）
         mp = pending_payload.get("music_play") or {}
-        mp["play_url"] = proxy_url
+        mp["play_url"] = result["play_url"]
         pending_payload["music_play"] = mp
-
-        # ★ 写入播放历史
-        song = mp.get("song") or {}
-        _record_history(song_id, song)
-
-        # ★ 将当前播放状态写入 player_mirror.json，
-        #   供前端的 WS 连接恢复（INIT 流程的 WS 消息早于前端连接，会被丢弃）
-        _save_playback_state_to_mirror(song_id, mp.get("song", {}), proxy_url)
 
         logger.info("ActionExecutor: play_song done (song=%s) → proxy OK", song_id)
         return None
     except Exception as e:
         logger.error("ActionExecutor: play_song failed: %s", e)
         return {"code": "PLAY_FAILED", "message": str(e)}
-
-
-def _record_history(song_id: str, song: dict):
-    """将播放记录写入 player_history.json。"""
-    artist_name = ""
-    artists = song.get("artists") or []
-    if isinstance(artists, list) and len(artists) > 0:
-        a0 = artists[0]
-        artist_name = a0.get("name", "") if isinstance(a0, dict) else str(a0)
-    elif song.get("artist"):
-        artist_name = song["artist"] if isinstance(song["artist"], str) else ""
-
-    entry = {
-        "song_id": song_id,
-        "song_name": song.get("name", "未知歌曲"),
-        "artist": artist_name,
-        "cover_url": song.get("cover_url", ""),
-        "played_at": int(__import__("time").time() * 1000),
-        "feedback": "",
-        "duration_played_ms": 0,
-    }
-    from agent.state.player_state import append_history_entry
-    append_history_entry(entry)
 
 
 def _pop_failed_from_queue(state: dict, failed_song_id: str):
@@ -194,34 +164,6 @@ def _pop_failed_from_queue(state: dict, failed_song_id: str):
         })
         logger.info("Popped failed song=%s from playlist_queue, %d remaining",
                      failed_song_id, len(rds["playlist_queue"]))
-
-
-def _save_playback_state_to_mirror(song_id: str, song: dict, play_url: str):
-    """将当前播放状态写入 player_mirror.json。
-
-    INIT 流程的 WS 消息早于前端连接到达，会被静默丢弃。
-    此处将播放状态持久化，供前端 WS 连接时恢复播放。
-    """
-    # 防御：不缓存测试歌曲
-    song_name = (song.get("name") or "").strip()
-    if song_name in ("测试歌曲", "测试", "Song 1", "Song1", "Next", "Test Song", "test"):
-        logger.info("skip caching test song=%r to player_mirror", song_name)
-        return
-    from agent.state.player_state import load_player_mirror, DEFAULT_PLAYER_MIRROR
-    from agent.config import settings as _settings
-    mirror = load_player_mirror() or dict(DEFAULT_PLAYER_MIRROR)
-    mirror["current_song"] = song
-    mirror["play_url"] = play_url
-    mirror["is_playing"] = True
-    mirror["current_position_ms"] = 0
-    mirror["updated_at_ms"] = int(__import__("time").time() * 1000)
-    # 保持原有的 queue 信息不覆盖
-    try:
-        os.makedirs(os.path.dirname(_settings.PLAYER_MIRROR_FILE), exist_ok=True)
-        with open(_settings.PLAYER_MIRROR_FILE, "w", encoding="utf-8") as f:
-            json.dump(mirror, f, ensure_ascii=False, indent=2)
-    except OSError:
-        logger.warning("Failed to write playback state to player_mirror")
 
 
 def _update_rds_current_song(state: dict, params: dict, pending_payload: dict):

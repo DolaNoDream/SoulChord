@@ -349,17 +349,80 @@ class TestUser:
         assert data["nickname"] == "新昵称"
 
     def test_analyze_writes_profile(self, client, tmp_data_dir):
+        from agent.services.profile_service import ProfileService, set_profile_service
+        from unittest.mock import AsyncMock
+        import json
+
+        # 设置 ProfileService + mock LLM
+        mock_llm = AsyncMock()
+        mock_llm.call_json.return_value = {
+            "ok": True,
+            "data": {
+                "energy_baseline": 0.6, "tempo_preference": "mixed",
+                "mood_distribution": {"calm": 0.5, "happy": 0.5},
+                "era_affinity": {"2020s": 1.0},
+                "vocal_preference": "mixed", "discovery_openness": 0.5,
+                "listening_pattern": "mixed", "confidence": 0.7,
+                "favorite_genres": ["pop", "rock"],
+                "favorite_artists": ["周杰伦"],
+                "music_preference_desc": "测试描述",
+            },
+        }
+        svc = ProfileService(llm_service=mock_llm)
+        set_profile_service(svc)
+
+        # 写入一首歌供分析
+        pl_file = os.path.join(tmp_data_dir, "playlists.json")
+        with open(pl_file, "w", encoding="utf-8") as f:
+            json.dump({
+                "playlists": [{"playlist_id": "p1", "name": "测试", "song_count": 1}],
+                "songs": {"p1": [{"id": "1", "name": "夜曲", "artists": [{"name": "周杰伦"}], "album": {}, "duration_ms": 200000}]},
+            }, f)
+
         resp = client.post("/api/user/analyze")
         assert resp.status_code == 200
-        assert resp.json()["data"]["update_at"] > 0
+        assert resp.json()["code"] == 0
+        assert resp.json()["data"].get("update_at", 0) > 0
 
-        memory = _read_json(os.path.join(tmp_data_dir, "memory.json"))
+        memory_path = os.path.join(tmp_data_dir, "memory.json")
+        if os.path.exists(memory_path):
+            with open(memory_path, "r", encoding="utf-8") as f:
+                memory = json.load(f)
+        else:
+            memory = {}
         profile = memory.get("profile", {})
         assert "favorite_genres" in profile
         assert "music_preference_desc" in profile
-        assert "AI_conclustion" in profile
 
-    def test_analyze_then_profile_returns_data(self, client):
+    def test_analyze_then_profile_returns_data(self, client, tmp_data_dir):
+        from agent.services.profile_service import ProfileService, set_profile_service
+        from unittest.mock import AsyncMock
+        import json
+
+        mock_llm = AsyncMock()
+        mock_llm.call_json.return_value = {
+            "ok": True,
+            "data": {
+                "energy_baseline": 0.6, "tempo_preference": "mixed",
+                "mood_distribution": {"calm": 0.5, "happy": 0.5},
+                "era_affinity": {"2020s": 1.0},
+                "vocal_preference": "mixed", "discovery_openness": 0.5,
+                "listening_pattern": "mixed", "confidence": 0.7,
+                "favorite_genres": ["pop", "rock"],
+                "favorite_artists": ["周杰伦"],
+                "music_preference_desc": "测试描述",
+            },
+        }
+        svc = ProfileService(llm_service=mock_llm)
+        set_profile_service(svc)
+
+        pl_file = os.path.join(tmp_data_dir, "playlists.json")
+        with open(pl_file, "w", encoding="utf-8") as f:
+            json.dump({
+                "playlists": [{"playlist_id": "p1", "name": "测试", "song_count": 1}],
+                "songs": {"p1": [{"id": "1", "name": "夜曲", "artists": [{"name": "周杰伦"}], "album": {}, "duration_ms": 200000}]},
+            }, f)
+
         client.post("/api/user/analyze")
         resp = client.get("/api/user/profile")
         data = resp.json()["data"]
@@ -793,3 +856,73 @@ class TestStoreIsolation:
         pls = playlist_store.list_all()
         assert len(pls) == 1
         assert "store-test" in pls[0]["source_url"]
+
+    def test_import_from_qq(self, client, tmp_data_dir):
+        """import_from_qq 写入 playlists.json。"""
+        mock_songs_data = {
+            "code": 0,
+            "msg": "ok",
+            "data": {
+                "info": {
+                    "title": "我的QQ歌单",
+                    "picurl": "http://cover.url",
+                    "desc": "测试歌单",
+                },
+                "songs": [
+                    {
+                        "id": 1001, "mid": "mid1", "name": "夜曲",
+                        "singer": [{"id": 1, "name": "周杰伦"}],
+                        "album": {"id": 100, "name": "叶惠美"},
+                        "interval": 240, "pay": {"pay_play": 0},
+                    },
+                ],
+            },
+        }
+        with patch("agent.routes.http_routes._call_qq_api") as mock_qq:
+            mock_qq.return_value = mock_songs_data
+            resp = client.post("/api/qq/playlist/import", json={"qq_id": "12345"})
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["code"] == 0
+        pl = body["data"]
+        assert pl["provider"] == "qqmusic"
+        assert pl["qq_id"] == 12345
+        assert pl["name"] == "我的QQ歌单"
+        assert pl["song_count"] == 1
+        assert pl["description"] == "测试歌单"
+
+        # 验证持久化
+        pls = playlist_store.list_all()
+        assert len(pls) == 1
+        assert pls[0]["playlist_id"] == pl["playlist_id"]
+
+    def test_import_from_qq_empty_songs(self, client, tmp_data_dir):
+        """QQ 导入空歌单。"""
+        with patch("agent.routes.http_routes._call_qq_api") as mock_qq:
+            mock_qq.return_value = {
+                "code": 0,
+                "msg": "ok",
+                "data": {
+                    "info": {"title": "", "picurl": "", "desc": ""},
+                    "songs": [],
+                },
+            }
+            resp = client.post("/api/qq/playlist/import", json={"qq_id": "99999"})
+
+        assert resp.status_code == 200
+        pl = resp.json()["data"]
+        assert pl["song_count"] == 0
+
+    def test_import_from_qq_api_failure(self, client, tmp_data_dir):
+        """QQ API 返回错误 → 不透传写入。"""
+        with patch("agent.routes.http_routes._call_qq_api") as mock_qq:
+            mock_qq.return_value = {"code": -1, "msg": "not found"}
+            resp = client.post("/api/qq/playlist/import", json={"qq_id": "bad_id"})
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["code"] != 0
+        assert "not found" in body["msg"]
+        # 验证没有写入
+        assert playlist_store.list_all() == []

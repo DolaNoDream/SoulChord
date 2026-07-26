@@ -1,3 +1,126 @@
+			## 三十三、2026-07-23 LLM API Key 真实流动修复（已完成）
+
+	**"前端设置了 API key，后端却一直用 .env 里的写死 key" → 前端 key 真正生效**
+
+	| # | 改动 | 详情 | 文件 |
+	|---|------|------|------|
+	| ① | **LLMService.reconfigure()** | 新增热更新方法，重置 `self._client = None` 迫使下次调用用新 key 重建 AsyncOpenAI | **改** agent/services/llm_service.py |
+	| ② | **lifespan 启动优先读用户 key** | 第 2.7 步先加载 `settings.json`，若用户已保存 key 则用它配置 LLMService，不再只用 .env | **改** agent/runtime/lifespan.py |
+	| ③ | **PUT /api/settings 热更新** | 收到新 `llm_apikey` 后调用 `_llm_service.reconfigure()`，用户改 key 立即生效无需重启 | **改** agent/routes/http_routes.py |
+	| ④ | **register_http_routes 注入 llm_service** | 新增可选参数，lifespan 传入 `_llm_service` 单例，避免循环依赖 | **改** agent/routes/http_routes.py |
+
+	**根因**：前端 key 经 `PUT /api/settings` 存到 `settings.json`，但 LLMService 启动后永不刷新。`_resolve_llm_key()` 只影响 HTTP 读取端点，不影响 LLM 运行时。两处断裂。
+
+	**42 相关测试通过，0 回归**
+
+---
+
+			## 三十二、2026-07-23 桌面打包 — SoulChord NSIS 安装包（已完成）
+
+	**从"5 终端手动启动" → "用户一键安装，双击运行"**
+
+	| # | 改动 | 详情 | 文件 |
+	|---|------|------|------|
+	| ① | **PyInstaller 3 后端** | agent(25MB) + music_api(25MB) + qqmusic_api(22MB) — onedir 模式，排除 transformers 省 65MB/个 | **新建** build/agent.spec, music_api.spec, qqmusic_api.spec, run_*.py |
+	| ② | **NeteaseCloudMusicApi 打包** | pkg 编译首选，兜底 portable Node.js(67MB) | **新建** build/netease-wrapper/ |
+	| ③ | **BackendManager** | Electron spawn 4 子进程 + 顺序启动 + 健康检查 + taskkill 清理 | **新建** electron/backend-manager.ts |
+	| ④ | **Loading 窗口** | frameless 透明窗口，IPC 实时显示 4 后端启动进度 | **新建** public/loading.html, 改 electron/main.ts + preload.ts |
+	| ⑤ | **electron-builder 配置** | extraResources 包含 4 后端 → NSIS oneClick:false | **改** electron-builder.yml |
+	| ⑥ | **build-all.ps1** | 7 步全自动流水线：检查环境 → pip install → PyInstaller × 3 → Netease → npm build → electron-builder → 验证 | **新建** build-all.ps1 |
+	| ⑦ | **经验** | .pth 中文路径 GBK 解码 → $env:PYTHONUTF8=1；QQMusicApi version pin 冲突 → 改 >=；GitHub 下载失败 → npmmirror 镜像 | — |
+
+	**产物**：`SoulChord-0.1.0-Setup.exe`（218MB）
+
+---
+
+	**从"只有网易云登录" → "双 Provider 登录 + Agent 状态感知 + SourceSelector 动态优先级"**
+
+	| # | 改动 | 详情 | 文件 |
+	|---|------|------|------|
+	| ① | **QQMusicApi 登录端点** | `/login/status` 查询 + `/login/logout` 标记无效；QR 成功后自动 `credential_store.update()` | **改** modules/login.py + routes/login.py |
+	| ② | **Agent QQ 代理路由** | `_call_qq_api()` 调 8082；新增 `/api/qq/status` / qrcode / qrcode/status 3 端点；`/api/init` 含 qq 状态 | **改** http_routes.py |
+	| ③ | **ProviderAccount 模型** | `provider / login_status / nickname / avatar_url` dataclass | **新增** accounts/models.py |
+	| ④ | **ProviderAccountService** | asyncio background loop（300s），仅查 `support_account=True` 的 Provider；模块级 singleton 供 lifespan/dispatcher/executor 共享 | **新增** provider_account_service.py |
+	| ⑤ | **support_account 属性** | `MusicProvider` 默认 False；NeteaseProvider + QQProvider 覆写为 True；`get_account_status()` 可选不加入 ABC | **改** base.py + netease_provider.py + qq_provider.py |
+	| ⑥ | **SourceSelector 无状态** | `ProviderSelectionContext` dataclass；`rank(song, context)`；`_resolve_priority(accounts)` 每次返回新列表；QQ 登录后 qqmusic 优先 | **改** source_selector.py |
+	| ⑦ | **ActionExecutor 注入 accounts** | `_exec_play_with_sources` 从 ProviderAccountService 取 accounts，传 context 给 rank() | **改** action_executor.py |
+	| ⑧ | **Lifespan 集成** | 第 2.9 步初始化 ProviderAccountService + create_providers；shutdown 时 stop() | **改** lifespan.py |
+	| ⑨ | **前端 QQ 扫码 UI** | SettingsDrawer QQ 账号区 + 扫码弹窗；settings.ts qqLoginStatus/qqNickname；agent.ts getQqStatus/getQqQrcode/getQqQrcodeStatus | **改** SettingsDrawer.vue + settings.ts + agent.ts |
+
+	**改动规模**：4 新增 + 9 修改 = 13 文件 / 361 测试通过（零回归）
+
+	---
+
+			## 三十、2026-07-22 v9.14 P2 — SourceSelector 播放源选择（已完成）
+
+	**从单源 play_url → 多源 try/except 重试**
+
+	| # | 改动 | 详情 | 文件 |
+	|---|------|------|------|
+	| ① | **SongSource 数据类** | provider / platform_id / platform_mid / play_available；`from_dict()` 类方法 | **改** providers/base.py |
+	| ② | **Provider.get_play_url ABC** | 参数统一为 SongSource | **改** providers/base.py |
+	| ③ | **NeteaseProvider.get_play_url** | `:8081/songs/{platform_id}/playurl` | **改** netease_provider.py |
+	| ④ | **QQProvider.get_play_url** | `:8082/song/{mid}/url` | **改** qq_provider.py |
+	| ⑤ | **SourceSelector** | `rank(song)` 按 PROVIDER_PRIORITY + play_available 排序，纯同步无状态 | **新增** source_selector.py |
+	| ⑥ | **ActionExecutor 多源重试** | `_exec_play` 有 sources 时 for+try/except 依次尝试各 Provider；全部失败报 PLAY_URL_NOT_FOUND（不 fallback 旧路径）；无 sources 走旧路径 | **改** action_executor.py |
+	| ⑦ | **_build_song_payload 透传 sources** | 改名 `_to_frontend_song` → `_build_song_payload`；输出新增 sources 字段 | **改** action_planner.py |
+	| ⑧ | **PROVIDER_PRIORITY 配置** | 默认 ["netease", "qqmusic"] | **改** config.py |
+	| ⑨ | **20 个 P2 测试** | SongSource / SourceSelector rank / _build_song_payload / _exec_play with sources | **改** test_providers.py |
+
+	**改动规模**：1 新增 + 5 修改 = 6 文件，20 新测试
+
+	**验证**：361/364 通过（3 预存外部依赖失败），0 回归。
+
+	---
+
+	## 二十九、2026-07-22 P3 计划定稿 — QQ 扫码登录 + Provider 登录状态感知
+
+	**从"只有网易云登录" → "双 Provider 登录 + Agent 状态感知"**
+
+	| # | 阶段 | 详情 | 文件 |
+	|---|------|------|------|
+	| ① | **P3.1 QQ login API** | QQMusicApi(8082) 新增 `/login/status` + `/login/logout`；qrcode 成功后自动存 credential；Agent 新增代理路由 `/api/qq/*`；`/api/init` 含 qq 状态 | backend: login.py/modules + agent: http_routes.py |
+	| ② | **P3.2 状态服务** | `ProviderAccount` 模型在 `accounts/models.py`；`ProviderAccountService` asyncio background loop 定时刷新；`SourceSelector.rank(song, context: ProviderSelectionContext)` 无状态动态优先级 | accounts/ + provider_account_service.py + source_selector.py + action_executor.py |
+	| ③ | **P3.3 前端 UI** | SettingsDrawer QQ 扫码登录区域 + settingsStore qq 状态 + agent.ts API | SettingsDrawer.vue + settings.ts + agent.ts |
+
+	**关键设计决策**：
+	- ProviderAccountService 用 `asyncio.create_task` 自管理生命周期，不新增 Scheduler event
+	- SourceSelector 无状态：`_resolve_priority()` 每次返回新列表，不改成员变量
+	- `/api/init` 只供前端展示；Agent 运行时状态由 ProviderAccountService 独立维护
+	- 实施顺序：P3.1 → P3.2 → P3.3（最后做前端）
+
+	**详细方案**：`.claude/plans/delightful-finding-otter.md`
+
+	---
+
+			## 二十八、2026-07-22 v9.14 P1 — QQ Music 双数据源
+
+**从单网易云源 → 网易云 + QQ 双数据源搜索融合**
+
+| # | 改动 | 详情 | 文件 |
+|---|------|------|------|
+| ① | **MusicProvider 抽象层** | MusicProvider ABC：search() / health_check() / get_play_url()（预留）。ProviderSearchResult 统一中间模型 | **NEW** providers/base.py |
+| ② | **NeteaseProvider** | 封装 music_service.py 现有 HTTP 调用，输出 ProviderSearchResult | **NEW** providers/netease_provider.py |
+| ③ | **QQProvider** | HTTP 调 qqmusic-api-web:8082，仅 search + health_check 最小集 | **NEW** providers/qq_provider.py |
+| ④ | **ProviderRegistry** | 注册 + 获取 + 健康检查（timeout=2s，失败不阻塞） | **NEW** providers/registry.py |
+| ⑤ | **MusicSearchService** | 并行调两个 Provider，asyncio.gather(return_exceptions=True)，故障隔离 | **NEW** search_service.py |
+| ⑥ | **SongResolver 增强** | 新增 resolve() 入口：normalize → merge（按 normalized title+artist 聚类）→ rank（离散评分）；不选 primary_source | **修改** song_resolver.py |
+| ⑦ | **Song dict 新增字段** | provider / platform_id / platform_mid / sources[]，不碰 id | **修改** song_resolver.py, adapter.py |
+| ⑧ | **adapter 开关保护** | MUSIC_PROVIDERS.enabled 关闭时走旧 MusicService | **修改** adapter.py |
+| ⑨ | **配置项** | MUSIC_PROVIDERS + DEFAULT_PROVIDER + PROVIDER_HEALTH_TIMEOUT | **修改** config.py |
+
+**改动规模**：6 新增 + 3 修改 = 9 文件
+
+**设计原则**：
+- Provider 对称：都走独立 HTTP 服务，不做 SDK subprocess
+- 故障隔离：一个 Provider 挂，另一个照常
+- 历史兼容：id 字段不变，仅新增字段
+- P1 不做：UnifiedSong / primary_source / 登录 / 歌单导入
+
+**详细方案**：见 memory/session-2026-07-22-qqmusic-dual-source.md
+
+---
+
 		## 二十七、2026-07-22 v9.11 — Fish Audio API 端点修复 + 音频闪避 + CORS
 
 **从错误 Fish Audio API 端点 → 正确 v1 API + 前端音频体验修复**

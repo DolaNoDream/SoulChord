@@ -27,10 +27,12 @@ export interface Song {
 export interface Playlist {
   playlist_id: string        // 歌单唯一 ID
   name: string               // 本地自定义名称
-  source_url: string         // 原始网易云分享链接
+  source_url: string         // 原始分享链接
   song_count: number         // 歌单歌曲总数
   created_at: number         // 导入时间戳
   netease_id?: number        // 网易云歌单 ID（有值表示是网易云导入的）
+  qq_id?: number             // QQ 音乐歌单 ID（有值表示是 QQ 音乐导入的）
+  provider?: string          // 来源平台：netease / qqmusic
   remark?: string            // 备注
 }
 

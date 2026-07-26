@@ -29,11 +29,24 @@ class DJHostConfig:
 
 
 @dataclass
+class MusicProviderConfig:
+    """多音乐源 Provider 配置（v9.14）。"""
+    enabled: bool = True
+    health_timeout_s: float = 2.0
+
+
+@dataclass
 class Settings:
     # --- 网络 ---
     AGENT_HOST: str = "127.0.0.1"
     AGENT_PORT: int = 8000
     MUSIC_API_BASE_URL: str = "http://localhost:8081/api/v1"
+    QQ_API_BASE_URL: str = "http://localhost:8082"
+
+    # --- 多音乐源 ---
+    DEFAULT_PROVIDER: str = "netease"
+    PROVIDER_PRIORITY: list[str] = field(default_factory=lambda: ["netease", "qqmusic"])
+    music_providers: MusicProviderConfig = field(default_factory=MusicProviderConfig)
 
     # --- LLM ---
     DEEPSEEK_API_KEY: str = ""
@@ -107,10 +120,18 @@ def load_settings() -> Settings:
         persona_style=os.environ.get("DJ_HOST_PERSONA_STYLE", "warm"),
     )
 
+    music_providers = MusicProviderConfig(
+        enabled=os.environ.get("MUSIC_PROVIDERS_ENABLED", "true").lower() == "true",
+        health_timeout_s=float(os.environ.get("PROVIDER_HEALTH_TIMEOUT_S", "2.0")),
+    )
+
     return Settings(
         AGENT_HOST=os.environ.get("AGENT_HOST", "127.0.0.1"),
         AGENT_PORT=int(os.environ.get("AGENT_PORT", "8000")),
         MUSIC_API_BASE_URL=os.environ.get("MUSIC_API_BASE_URL", "http://localhost:8081/api/v1"),
+        QQ_API_BASE_URL=os.environ.get("QQ_API_BASE_URL", "http://localhost:8082"),
+        DEFAULT_PROVIDER=os.environ.get("DEFAULT_PROVIDER", "netease"),
+        music_providers=music_providers,
         DEEPSEEK_API_KEY=os.environ.get("DEEPSEEK_API_KEY", ""),
         DEEPSEEK_BASE_URL=os.environ.get("DEEPSEEK_BASE_URL", "https://api.deepseek.com/v1"),
         LLM_MODEL=os.environ.get("LLM_MODEL", "deepseek-chat"),

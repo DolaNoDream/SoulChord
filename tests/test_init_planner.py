@@ -234,9 +234,10 @@ class TestDjPlannerInit:
         assert "welcome_text" in plan
         # 验证 playlist 数量（MVP 固定 10 首 — Q12 拍板）
         assert len(plan["initial_playlist"]) == 10, "initial_playlist 应为 10 首"
-        # ★ v9.1: INIT 注入 play_music 工具调用，路由到 tool_dispatcher
+        # ★ P6: INIT 注入 recommend_music 工具调用，路由到 tool_dispatcher
         assert result["next_node"] == "tool_dispatcher", "INIT 应走 tool_dispatcher 搜索歌曲"
-        assert len(result["pending_tool_calls"]) > 0, "应注入 play_music 工具调用"
+        assert len(result["pending_tool_calls"]) > 0, "应注入 recommend_music 工具调用"
+        assert result["pending_tool_calls"][0]["name"] == "recommend_music", "工具名应为 recommend_music"
 
     @pytest.mark.asyncio
     async def test_dj_planner_non_init_passthrough(self):
@@ -296,10 +297,10 @@ class TestActionPlannerInit:
             "init_plan": init_plan,
             "tool_messages": [
                 {
-                    "name": "play_music",
+                    "name": "recommend_music",
                     "status": "ok",
                     "result": {
-                        "query": "江南 林俊杰",
+                        "requested": 1,
                         "songs": [
                             {"id": "108914", "name": "江南", "artists": [{"id": "", "name": "林俊杰"}],
                              "album": {"id": "", "name": ""}, "cover_url": "", "duration_ms": 0, "fee": 0},
@@ -307,10 +308,10 @@ class TestActionPlannerInit:
                     },
                 },
                 {
-                    "name": "play_music",
+                    "name": "recommend_music",
                     "status": "ok",
                     "result": {
-                        "query": "爱错(Live) 王力宏",
+                        "requested": 1,
                         "songs": [
                             {"id": "25642214", "name": "爱错(Live)", "artists": [{"id": "", "name": "王力宏"}],
                              "album": {"id": "", "name": ""}, "cover_url": "", "duration_ms": 0, "fee": 0},
@@ -578,7 +579,7 @@ class TestInitPlannerIntegration:
             "last_error": None,
         }
 
-        with patch("agent.nodes.action_executor._music.get_play_url",
+        with patch("agent.services.play_service.PlayService._resolve_legacy",
                     return_value="http://localhost:8000/api/proxy/audio?url=https://example.com/test.mp3"):
             result = await graph.ainvoke(initial_state)
 
@@ -1383,7 +1384,7 @@ class TestStateGraphRouting:
         from agent.graph import build_graph
 
         graph = build_graph()
-        with patch("agent.nodes.action_executor._music.get_play_url",
+        with patch("agent.services.play_service.PlayService._resolve_legacy",
                     return_value="http://localhost:8000/api/proxy/audio?url=https://example.com/test.mp3"):
             result = await graph.ainvoke({
                 "trigger_type": "player_event",
@@ -1444,3 +1445,119 @@ class TestStateGraphRouting:
         assert result.get("should_speak") is True
         assert result.get("pending_payload", {}).get("transition_speech") is not None
         assert result.get("turn_count", 0) >= 1
+
+
+# ═══════════════════════════════════════════════════════════════
+# 13. _dedupe_search_results_to_unique_songs
+# ═══════════════════════════════════════════════════════════════
+
+
+class TestDedupeSearchResults:
+    """_dedupe_search_results_to_unique_songs P5.x 聚类去重。"""
+
+    def _make_song(self, name: str, artist: str, song_id: str) -> dict:
+        return {
+            "id": song_id,
+            "name": name,
+            "artists": [{"id": "", "name": artist}],
+            "album": {},
+        }
+
+    def test_removes_live_duplicate(self):
+        """同一首歌的 Live 版本应被过滤，保留原版。"""
+        from agent.nodes.dj_planner import _dedupe_search_results_to_unique_songs
+
+        songs = [
+            self._make_song("午后", "上海彩虹室内合唱团", "1"),
+            self._make_song("午后(Live)", "上海彩虹室内合唱团", "2"),
+            self._make_song("午后(Remix)", "上海彩虹室内合唱团", "3"),
+        ]
+        result = _dedupe_search_results_to_unique_songs(songs, max_songs=5)
+
+        assert len(result) == 1, "3 个版本应合并为 1 首"
+        assert result[0]["name"] == "午后", "应保留原版而非 Live"
+
+    def test_keeps_different_songs(self):
+        """不同歌曲各自保留。"""
+        from agent.nodes.dj_planner import _dedupe_search_results_to_unique_songs
+
+        songs = [
+            self._make_song("午后", "上海彩虹室内合唱团", "1"),
+            self._make_song("起风了", "买辣椒也用券", "2"),
+            self._make_song("晴天", "周杰伦", "3"),
+        ]
+        result = _dedupe_search_results_to_unique_songs(songs, max_songs=5)
+
+        assert len(result) == 3
+
+    def test_respects_max_songs(self):
+        """max_songs 限制输出数量。"""
+        from agent.nodes.dj_planner import _dedupe_search_results_to_unique_songs
+
+        songs = [
+            self._make_song("午后", "上海彩虹室内合唱团", "1"),
+            self._make_song("起风了", "买辣椒也用券", "2"),
+            self._make_song("晴天", "周杰伦", "3"),
+            self._make_song("江南", "林俊杰", "4"),
+            self._make_song("夜曲", "周杰伦", "5"),
+            self._make_song("爱错(Live)", "王力宏", "6"),
+        ]
+        result = _dedupe_search_results_to_unique_songs(songs, max_songs=3)
+
+        assert len(result) == 3
+
+    def test_cross_provider_normalized(self):
+        """QQ/网易云同一首歌不同格式应合并。"""
+        from agent.nodes.dj_planner import _dedupe_search_results_to_unique_songs
+
+        songs = [
+            # QQ 格式（歌手前缀）
+            self._make_song("上海彩虹室内合唱团-午后", "上海彩虹室内合唱团", "qq_1"),
+            # Netease 格式
+            self._make_song("午后", "上海彩虹室内合唱团", "ne_1"),
+        ]
+        result = _dedupe_search_results_to_unique_songs(songs, max_songs=5)
+
+        assert len(result) == 1, "跨 provider 同一首歌应合并"
+
+    def test_same_artist_different_songs_kept(self):
+        """同歌手不同歌曲不合并。"""
+        from agent.nodes.dj_planner import _dedupe_search_results_to_unique_songs
+
+        songs = [
+            self._make_song("晴天", "周杰伦", "1"),
+            self._make_song("夜曲", "周杰伦", "2"),
+            self._make_song("稻香", "周杰伦", "3"),
+        ]
+        result = _dedupe_search_results_to_unique_songs(songs, max_songs=5)
+
+        assert len(result) == 3
+
+    def test_prefers_original_over_cover(self):
+        """原版优先于翻唱。"""
+        from agent.nodes.dj_planner import _dedupe_search_results_to_unique_songs
+
+        songs = [
+            self._make_song("起风了(翻唱)", "买辣椒也用券", "1"),
+            self._make_song("起风了", "买辣椒也用券", "2"),
+        ]
+        result = _dedupe_search_results_to_unique_songs(songs, max_songs=5)
+
+        assert len(result) == 1
+        assert result[0]["id"] == "2", "应选原版而非翻唱"
+
+    def test_preserves_order(self):
+        """输出保持搜索结果原始顺序。"""
+        from agent.nodes.dj_planner import _dedupe_search_results_to_unique_songs
+
+        songs = [
+            self._make_song("晴天", "周杰伦", "1"),
+            self._make_song("江南", "林俊杰", "2"),
+            self._make_song("午后(Live)", "上海彩虹室内合唱团", "3"),
+            self._make_song("午后", "上海彩虹室内合唱团", "4"),
+        ]
+        result = _dedupe_search_results_to_unique_songs(songs, max_songs=5)
+
+        assert len(result) == 3
+        # 午后的最佳版本（原版）应出现在晴天、江南之后
+        assert result[2]["id"] == "4"

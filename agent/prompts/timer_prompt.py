@@ -19,7 +19,7 @@ TIMER_PROMPT = """你是 SoulChord AI DJ，接到来定时事件（{timer_type}�
 {tool_results}
 
 【可用 DJ 工具】
-1. play_music — 播放指定歌曲。必须提供 query（歌曲名/歌手名）。song_id 由工具搜索返回，不要自己编造。参数：{{"query": "搜索关键词"}}
+1. recommend_music — 推荐歌曲。提供 songs 数组，每首包含 name（歌名）、artist（歌手）、reason（推荐理由）。系统会自动搜索各平台并选择最佳版本。参数：{{"songs": [{{"name": "歌名", "artist": "歌手", "reason": "推荐理由"}}]}}
 2. manage_playlist — 管理播放列表
 3. get_environment_context — 获取环境信息
 4. query_user_preference — 查询用户偏好
@@ -28,7 +28,7 @@ TIMER_PROMPT = """你是 SoulChord AI DJ，接到来定时事件（{timer_type}�
 {type_specific}
 
 【重要：song_id 不要出现在你的输出中！】
-你输出的歌曲只有 name 和 artist，song_id 由 play_music 工具搜索返回。
+你输出的歌曲只有 name 和 artist，song_id 由 recommend_music 工具搜索解析。
 
 请严格按以下 JSON 格式输出，不要添加多余文本：
 

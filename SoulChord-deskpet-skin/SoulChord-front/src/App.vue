@@ -56,6 +56,13 @@ onMounted(async () => {
         initData.netease_status.nickname,
       )
     }
+    // 加载 QQ 音乐登录状态
+    if (initData.qq) {
+      settingsStore.setQqStatus(
+        initData.qq.login_status,
+        initData.qq.nickname,
+      )
+    }
     // 加载本地歌单列表
     if (initData.playlists) {
       playlistStore.setFromInit(initData.playlists)

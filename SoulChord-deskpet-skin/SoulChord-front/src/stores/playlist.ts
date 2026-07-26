@@ -4,6 +4,7 @@ import type { Playlist, Song } from '@/types/music'
 import {
   importPlaylist, getPlaylists, getPlaylistDetail,
   updatePlaylist, deletePlaylist, importNeteasePlaylist,
+  importQqPlaylist,
   createPlaylist as apiCreatePlaylist,
   addSongToPlaylist as apiAddSongToPlaylist,
 } from '@/api/agent'
@@ -63,6 +64,24 @@ export const usePlaylistStore = defineStore('playlist', () => {
     errorMsg.value = ''
     try {
       await importNeteasePlaylist(neteaseId)
+      await loadPlaylists()
+      const userStore = useUserStore()
+      userStore.requestAnalyze().catch(() => {})
+      return true
+    } catch (e) {
+      errorMsg.value = e instanceof Error ? e.message : '导入失败'
+      return false
+    } finally {
+      isImporting.value = false
+    }
+  }
+
+  /** 从 QQ 音乐导入歌单（按 qq_id） */
+  async function doImportFromQq(qqId: string): Promise<boolean> {
+    isImporting.value = true
+    errorMsg.value = ''
+    try {
+      await importQqPlaylist(qqId)
       await loadPlaylists()
       const userStore = useUserStore()
       userStore.requestAnalyze().catch(() => {})
@@ -155,9 +174,14 @@ export const usePlaylistStore = defineStore('playlist', () => {
     return !!playlist.netease_id
   }
 
-  /** 获取非网易云导入的歌单（可用于手动添加歌曲） */
+  /** 判断是否为 QQ 音乐导入的歌单（不可删除） */
+  function isQqImported(playlist: Playlist): boolean {
+    return !!playlist.qq_id
+  }
+
+  /** 获取非平台导入的歌单（可用于手动添加歌曲） */
   const userPlaylists = computed(() =>
-    playlists.value.filter(p => !p.netease_id)
+    playlists.value.filter(p => !p.netease_id && !p.qq_id)
   )
 
   /** 设置初始数据（来自 /api/init） */
@@ -168,8 +192,9 @@ export const usePlaylistStore = defineStore('playlist', () => {
   return {
     playlists, selectedPlaylist, selectedSongs, isLoading, isImporting, errorMsg,
     playlistCount, totalSongs, userPlaylists,
-    loadPlaylists, doImport, doImportFromNetease, viewPlaylist, renamePlaylist, removePlaylist,
-    createPlaylist, addSong, isNeteaseImported,
+    loadPlaylists, doImport, doImportFromNetease, doImportFromQq,
+    viewPlaylist, renamePlaylist, removePlaylist,
+    createPlaylist, addSong, isNeteaseImported, isQqImported,
     setFromInit,
   }
 })

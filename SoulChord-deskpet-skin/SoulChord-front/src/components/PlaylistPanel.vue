@@ -5,15 +5,16 @@ import { useSettingsStore } from '@/stores/settings'
 import { useUserStore } from '@/stores/user'
 import { usePlayerStore } from '@/stores/player'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { getNeteasePlaylists, playPlaylistSong } from '@/api/agent'
+import { getNeteasePlaylists, getQqPlaylists, playPlaylistSong } from '@/api/agent'
 
 const playlistStore = usePlaylistStore()
 const settingsStore = useSettingsStore()
 const userStore = useUserStore()
 
 const showImportDialog = ref(false)
-const importTab = ref<'account' | 'link'>('account')
+const importTab = ref<'account' | 'qq' | 'link'>('account')
 const importUrl = ref('')
+const qqIdInput = ref('')
 const editingId = ref<string | null>(null)
 const editingName = ref('')
 const editInputRef = ref<HTMLInputElement | null>(null)
@@ -32,6 +33,18 @@ const neteasePlaylists = ref<Array<{
 const loadingNetease = ref(false)
 const importingIds = ref<Set<number>>(new Set())
 
+// QQ 歌单列表
+const qqPlaylists = ref<Array<{
+  id: number
+  title: string
+  picurl: string
+  songnum: number
+  desc: string
+  nick: string
+}>>([])
+const loadingQq = ref(false)
+const importingQqIds = ref<Set<number>>(new Set())
+
 onMounted(() => {
   playlistStore.loadPlaylists()
 })
@@ -41,14 +54,50 @@ async function openImportDialog() {
     ElMessage.warning('请先在设置中配置 LLM API Key')
     return
   }
-  if (!settingsStore.neteaseLoginStatus) {
-    ElMessage.warning('请先登录网易云账号')
+  if (!settingsStore.hasNeteaseLogin && !settingsStore.hasQqLogin) {
+    ElMessage.warning('请先登录网易云或 QQ 音乐账号')
     return
   }
   showImportDialog.value = true
-  importTab.value = 'account'
+  importTab.value = settingsStore.hasNeteaseLogin ? 'account' : 'qq'
   importUrl.value = ''
-  await loadNeteasePlaylists()
+  qqIdInput.value = ''
+  if (settingsStore.hasNeteaseLogin) {
+    await loadNeteasePlaylists()
+  }
+  if (settingsStore.hasQqLogin) {
+    await loadQqPlaylists()
+  }
+}
+
+async function handleImportFromQq() {
+  const qqId = qqIdInput.value.trim()
+  if (!qqId) {
+    ElMessage.warning('请输入 QQ 歌单 ID')
+    return
+  }
+  const success = await playlistStore.doImportFromQq(qqId)
+  if (success) {
+    showImportDialog.value = false
+    ElMessage.success('QQ 歌单导入成功，AI 正在分析你的音乐偏好...')
+  } else {
+    ElMessage.error(playlistStore.errorMsg || '导入失败，请检查歌单 ID 是否有效')
+  }
+}
+
+async function handleImportFromQqList(qqId: number) {
+  if (importingQqIds.value.has(qqId)) return
+  importingQqIds.value.add(qqId)
+  try {
+    const success = await playlistStore.doImportFromQq(String(qqId))
+    if (success) {
+      ElMessage.success('QQ 歌单导入成功！')
+    } else {
+      ElMessage.error(playlistStore.errorMsg || '导入失败')
+    }
+  } finally {
+    importingQqIds.value.delete(qqId)
+  }
 }
 
 async function loadNeteasePlaylists() {
@@ -60,6 +109,18 @@ async function loadNeteasePlaylists() {
     neteasePlaylists.value = []
   } finally {
     loadingNetease.value = false
+  }
+}
+
+async function loadQqPlaylists() {
+  loadingQq.value = true
+  try {
+    const data = await getQqPlaylists()
+    qqPlaylists.value = data.playlists || []
+  } catch {
+    qqPlaylists.value = []
+  } finally {
+    loadingQq.value = false
   }
 }
 
@@ -211,7 +272,7 @@ function formatDate(ts: number): string {
     <div v-else-if="playlistStore.playlists.length === 0" class="playlist-panel__empty">
       <span class="playlist-panel__empty-icon">📭</span>
       <p>还没有导入歌单</p>
-      <p class="playlist-panel__empty-hint">从网易云账号一键导入你的歌单</p>
+      <p class="playlist-panel__empty-hint">从网易云或 QQ 音乐账号一键导入你的歌单</p>
     </div>
     <div v-else class="playlist-panel__list">
       <div
@@ -242,8 +303,7 @@ function formatDate(ts: number): string {
           <button class="playlist-panel__action-btn" title="重命名" @click="startRename(pl.playlist_id, pl.name)">✎</button>
           <button
             class="playlist-panel__action-btn playlist-panel__action-btn--del"
-            :title="playlistStore.isNeteaseImported(pl) ? '网易云导入的歌单不可删除' : '删除'"
-            :disabled="playlistStore.isNeteaseImported(pl)"
+            title="删除"
             @click="handleDelete(pl.playlist_id, pl.name)"
           >✕</button>
         </div>
@@ -279,10 +339,17 @@ function formatDate(ts: number): string {
         <!-- Tab 切换 -->
         <div class="import-dialog__tabs">
           <button
+            v-if="settingsStore.hasNeteaseLogin"
             class="import-dialog__tab"
             :class="{ 'import-dialog__tab--active': importTab === 'account' }"
             @click="importTab = 'account'"
-          >从账号导入</button>
+          >从网易云导入</button>
+          <button
+            v-if="settingsStore.hasQqLogin"
+            class="import-dialog__tab"
+            :class="{ 'import-dialog__tab--active': importTab === 'qq' }"
+            @click="importTab = 'qq'; loadQqPlaylists()"
+          >从 QQ 导入</button>
           <button
             class="import-dialog__tab"
             :class="{ 'import-dialog__tab--active': importTab === 'link' }"
@@ -319,6 +386,64 @@ function formatDate(ts: number): string {
                 @click="handleImportFromAccount(pl.netease_id)"
               >
                 {{ importingIds.has(pl.netease_id) ? '导入中...' : '导入' }}
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- 从 QQ 导入 -->
+        <div v-if="importTab === 'qq'">
+          <p class="import-dialog__hint">选择要从 QQ 音乐账号导入的歌单</p>
+          <div v-if="loadingQq" class="playlist-panel__loading">加载歌单列表...</div>
+          <div v-else-if="qqPlaylists.length === 0" class="import-dialog__empty">
+            <p>没有找到歌单</p>
+          </div>
+          <div v-else class="import-dialog__netease-list">
+            <div
+              v-for="pl in qqPlaylists"
+              :key="pl.id"
+              class="import-dialog__netease-item"
+            >
+              <img
+                v-if="pl.picurl"
+                :src="pl.picurl"
+                class="import-dialog__netease-cover"
+              />
+              <div v-else class="import-dialog__netease-cover-placeholder">🎵</div>
+              <div class="import-dialog__netease-info">
+                <span class="import-dialog__netease-name">{{ pl.title }}</span>
+                <span class="import-dialog__netease-count">{{ pl.songnum }} 首</span>
+              </div>
+              <button
+                class="import-dialog__netease-import-btn"
+                :disabled="importingQqIds.has(pl.id)"
+                @click="handleImportFromQqList(pl.id)"
+              >
+                {{ importingQqIds.has(pl.id) ? '导入中...' : '导入' }}
+              </button>
+            </div>
+          </div>
+          <!-- 手动输入补充 -->
+          <div style="margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border-subtle);">
+            <p class="import-dialog__hint" style="margin-bottom: 8px;">或手动输入 QQ 歌单 ID</p>
+            <p class="import-dialog__hint" style="font-size: 10px; color: var(--text-muted); margin-bottom: 8px;">
+              歌单 ID 可在 QQ 音乐歌单页 URL 中找到：y.qq.com/n/ryqq/playlist/<strong>123456789</strong>
+            </p>
+            <div style="display: flex; gap: 8px;">
+              <input
+                v-model="qqIdInput"
+                class="settings-drawer__apikey-input"
+                style="flex: 1;"
+                placeholder="输入 QQ 歌单数字 ID"
+                @keydown.enter="handleImportFromQq"
+              />
+              <button
+                class="import-dialog__btn import-dialog__btn--confirm"
+                style="white-space: nowrap;"
+                :disabled="!qqIdInput.trim() || playlistStore.isImporting"
+                @click="handleImportFromQq"
+              >
+                {{ playlistStore.isImporting ? '导入中...' : '导入' }}
               </button>
             </div>
           </div>

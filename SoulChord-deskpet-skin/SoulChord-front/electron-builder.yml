@@ -8,6 +8,23 @@ directories:
 files:
   - dist
   - dist-electron
+extraResources:
+  - from: ../../dist_py/agent/agent
+    to: backend/agent
+    filter:
+      - "**/*"
+  - from: ../../dist_py/music_api/music_api
+    to: backend/music_api
+    filter:
+      - "**/*"
+  - from: ../../dist_py/qqmusic_api/qqmusic_api
+    to: backend/qqmusic_api
+    filter:
+      - "**/*"
+  - from: ../../dist_py/netease
+    to: backend/netease
+    filter:
+      - "**/*"
 win:
   sign: false
   target:

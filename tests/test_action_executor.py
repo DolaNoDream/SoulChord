@@ -172,9 +172,13 @@ class TestActionExecutorPlay:
         }
 
         with patch(
-            "agent.nodes.action_executor._music.get_play_url",
+            "agent.services.play_service.play_service.play",
             new_callable=AsyncMock,
-            return_value="https://example.com/play/509781655.mp3",
+            return_value={
+                "play_url": "http://localhost:8000/api/proxy/audio?url=https%3A%2F%2Fexample.com%2Fplay%2F509781655.mp3&provider=netease",
+                "song": {"song_id": "509781655", "name": "测试歌曲"},
+                "provider_name": "netease",
+            },
         ):
             result = await action_executor_node(state)
 
@@ -210,7 +214,7 @@ class TestActionExecutorPlay:
         }
 
         with patch(
-            "agent.nodes.action_executor._music.get_play_url",
+            "agent.services.play_service.play_service.play",
             new_callable=AsyncMock,
             return_value=None,
         ):
@@ -317,7 +321,7 @@ class TestActionExecutorFailureDegrades:
         }
 
         with patch(
-            "agent.nodes.action_executor._music.get_play_url",
+            "agent.services.play_service.play_service.play",
             new_callable=AsyncMock,
             side_effect=ConnectionError("Music API timeout"),
         ):

@@ -66,6 +66,7 @@ export async function fetchInit(): Promise<{
   }
   playlists: Playlist[]
   netease_status: { login_status: boolean; nickname: string }
+  qq: { provider: string; login_status: boolean; nickname: string; avatar_url: string | null }
   settings: Record<string, unknown>
 }> {
   const res = await http.get('/init')
@@ -125,6 +126,42 @@ export async function getNeteaseStatus(): Promise<{ login_status: boolean; nickn
   return res.data
 }
 
+// ---- 1.8 QQ 音乐账号登录 ----
+
+/** 查询 QQ 音乐登录状态（Agent 层统一格式） */
+export async function getQqStatus(): Promise<{
+  provider: string
+  login_status: boolean
+  nickname: string
+  avatar_url: string | null
+}> {
+  const res = await http.get('/qq/status')
+  return res.data
+}
+
+/** 获取 QQ 扫码登录二维码 */
+export async function getQqQrcode(): Promise<{
+  qr_type: string
+  identifier: string
+  mimetype: string
+  data: string
+  img: string
+}> {
+  const res = await http.get('/qq/login/qrcode')
+  return res.data
+}
+
+/** 轮询检查 QQ 扫码状态 */
+export async function getQqQrcodeStatus(identifier: string): Promise<{
+  event: number
+  done: boolean
+  identifier: string
+  login_type: string
+}> {
+  const res = await http.get('/qq/login/qrcode/status', { params: { identifier } })
+  return res.data
+}
+
 /** 获取当前登录用户的网易云歌单列表 */
 export async function getNeteasePlaylists(): Promise<{
   playlists: Array<{
@@ -143,6 +180,28 @@ export async function getNeteasePlaylists(): Promise<{
 /** 从网易云账号导入歌单到本地 */
 export async function importNeteasePlaylist(neteaseId: number): Promise<Playlist> {
   const res = await http.post('/netease/playlist/import', { netease_id: neteaseId })
+  return res.data
+}
+
+/** 从 QQ 音乐导入歌单到本地（按 qq_id） */
+export async function importQqPlaylist(qqId: string): Promise<Playlist> {
+  const res = await http.post('/qq/playlist/import', { qq_id: qqId })
+  return res.data
+}
+
+/** 获取当前登录用户的 QQ 歌单列表 */
+export async function getQqPlaylists(): Promise<{
+  playlists: Array<{
+    id: number
+    title: string
+    picurl: string
+    songnum: number
+    desc: string
+    nick: string
+  }>
+  total: number
+}> {
+  const res = await http.get('/qq/playlists')
   return res.data
 }
 

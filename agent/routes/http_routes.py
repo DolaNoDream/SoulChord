@@ -1,4 +1,4 @@
-"""HTTP 路由注册 — 11 群组（health / init / settings / playlist / user / feedback / memory / history / netease / proxy / feishu）。
+"""HTTP 路由注册 — 12 群组（health / init / settings / playlist / user / feedback / memory / history / netease / qq / proxy / tts / feishu）。
 
 所有数据读写经 Store 层，不直接 open json。
 """
@@ -16,6 +16,11 @@ from agent.state import memory_store, player_state, program_state, settings_stor
 from agent.state.state_manager import state_manager
 from agent.shared.enums import InitMode
 from agent.config import settings as config_settings
+from agent.services.llm_service import LLMService
+from agent.services.play_service import play_service
+
+# 模块级单例引用（由 register_http_routes 注入）
+_llm_service: LLMService | None = None
 
 
 # ── 统一响应 ──
@@ -31,6 +36,13 @@ def fail(code: int = 9999, msg: str = "服务内部异常") -> dict:
 # ── 常量 ──
 
 MUSIC_API_BASE = "http://localhost:8081"
+QQ_API_BASE = "http://localhost:8082"
+
+# ★ P4: Provider 级请求头映射，proxy_audio 据此设置动态 Referer
+PROVIDER_REFERERS = {
+    "netease": {"Referer": "https://music.163.com/"},
+    "qqmusic": {"Referer": "https://y.qq.com/"},
+}
 
 
 # ── 请求模型 ──
@@ -57,6 +69,10 @@ class PlaylistImportRequest(BaseModel):
 
 class NeteasePlaylistImportRequest(BaseModel):
     netease_id: int
+
+
+class QQPlaylistImportRequest(BaseModel):
+    qq_id: str  # QQ 音乐歌单数字 ID（songlist_id）
 
 
 class PlaylistUpdateRequest(BaseModel):
@@ -112,6 +128,28 @@ async def _call_music_api(method: str, path: str, json_data: dict | None = None)
     return None
 
 
+async def _call_qq_api(method: str, path: str, json_data: dict | None = None) -> dict | None:
+    """调 QQMusicApi（8082），失败返回 None。
+
+    QQMusicApi 使用统一响应格式 {code, msg, data}。
+    """
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            url = f"{QQ_API_BASE}{path}"
+            if method == "GET":
+                resp = await client.get(url, params=json_data)
+            else:
+                resp = await client.post(url, json=json_data)
+            if resp.status_code == 200:
+                body = resp.json()
+                return body
+            logger = __import__("logging").getLogger(__name__)
+            logger.warning("QQ API returned HTTP %d for %s %s", resp.status_code, method, path)
+    except Exception:
+        pass
+    return None
+
+
 async def _get_netease_login_status() -> dict:
     """从 music_agent_api 查询网易云登录状态，失败返回离线状态。"""
     result = await _call_music_api("GET", "/api/v1/login/status")
@@ -119,6 +157,25 @@ async def _get_netease_login_status() -> dict:
         data = result.get("data", {})
         return {"login_status": data.get("logged_in", False), "nickname": data.get("nickname", "")}
     return {"login_status": False, "nickname": ""}
+
+
+async def _get_qq_login_status() -> dict:
+    """从 QQMusicApi 查询 QQ 登录状态，Agent 层统一格式。
+
+    Returns:
+        统一格式：{provider, login_status, nickname, avatar_url}
+    """
+    result = await _call_qq_api("GET", "/login/status")
+    if result and result.get("code") == 0:
+        data = result.get("data", {})
+        return {
+            "provider": "qqmusic",
+            "login_status": bool(data.get("logged_in", False)),
+            "nickname": data.get("nickname") or "",
+            "avatar_url": data.get("avatar_url"),
+            "uin": int(data.get("musicid", 0)),
+        }
+    return {"provider": "qqmusic", "login_status": False, "nickname": "", "avatar_url": None, "uin": 0}
 
 def _unwrap_memory_profile(raw: dict) -> dict:
     """将 memory_store 内部格式 {key: {value: ..., ts: ...}} 展开为 {key: value}。"""
@@ -153,8 +210,10 @@ def _compute_feedback_stats(data: dict) -> dict:
     }
 
 
-def register_http_routes(app: FastAPI):
+def register_http_routes(app: FastAPI, llm_service: LLMService | None = None):
     """注册所有 HTTP 路由到 FastAPI app。"""
+    global _llm_service
+    _llm_service = llm_service
 
     # ── 1. health ──
 
@@ -174,6 +233,7 @@ def register_http_routes(app: FastAPI):
     async def init():
         settings = settings_store.load()
         netease_status = await _get_netease_login_status()
+        qq_status = await _get_qq_login_status()
         profile_raw = memory_store.load_category("profile")
         profile = _unwrap_memory_profile(profile_raw)
         playlists = playlist_store.list_all()
@@ -193,6 +253,7 @@ def register_http_routes(app: FastAPI):
                 "llm_apikey": _resolve_llm_key(settings.get("llm_apikey", "")),
             },
             "netease": netease_status,
+            "qq": qq_status,
             "user_profile": profile,
             "playlists": playlists,
             "player": player_mirror,
@@ -222,6 +283,9 @@ def register_http_routes(app: FastAPI):
         updates = {}
         if body.llm_apikey is not None:
             updates["llm_apikey"] = body.llm_apikey
+            # 热更新 LLMService，用户修改 API key 后立即生效（无需重启）
+            if _llm_service is not None:
+                _llm_service.reconfigure(api_key=body.llm_apikey)
         updated = settings_store.update(**updates)
         return ok(updated)
 
@@ -293,12 +357,9 @@ def register_http_routes(app: FastAPI):
 
     @app.delete("/api/playlist/{playlist_id}")
     async def playlist_delete(playlist_id: str):
-        # 保护网易云导入的歌单不被删除
         pl = playlist_store.get(playlist_id)
         if pl is None:
             return fail(1003, "歌单不存在")
-        if pl.get("netease_id"):
-            return fail(1002, "网易云导入的歌单不可删除，请在网易云客户端操作")
         ok_ = playlist_store.delete(playlist_id)
         return ok()
 
@@ -311,35 +372,63 @@ def register_http_routes(app: FastAPI):
 
     @app.post("/api/playlist/play")
     async def playlist_play_song(body: dict = Body(...)):
-        """从歌单播放指定歌曲。获取播放 URL 并返回给前端。"""
-        import urllib.parse
+        """从歌单播放指定歌曲 → 走 PlayService 统一播放入口。
+
+        所有播放入口统一经 PlayService：
+          1. SourceSelector + Provider 解析播放 URL
+          2. 构建代理 URL
+          3. 写入播放历史 + player_mirror
+          4. 广播 WS music.play（使 AI DJ 事件链触发 DJ monologue）
+          5. 返回 play_url 给前端直接播放
+        """
         song_id = body.get("id", "")
         if not song_id:
             return fail(1001, "song_id 不能为空")
 
-        result = await _call_music_api("GET", f"/api/v1/songs/{song_id}/playurl")
-        if not result or result.get("code") != 0:
-            msg = result.get("msg", "获取播放地址失败") if result else "网易云服务不可用"
-            return fail(3002, msg)
-
-        raw_url = result.get("data", {}).get("url")
-        if not raw_url:
-            return fail(3002, "无法获取歌曲播放地址")
-
-        encoded = urllib.parse.quote(raw_url, safe="")
-        proxy_url = f"http://localhost:{config_settings.AGENT_PORT}/api/proxy/audio?url={encoded}"
-
-        # 回传歌曲数据，供前端直接播放
+        # ★ 构造完整 song dict（PlayService 需要 sources[] 做多源解析）
         song = {
-            "id": body.get("id", ""),
+            "id": song_id,
             "name": body.get("name", ""),
             "artists": body.get("artists", []),
             "album": body.get("album", {}),
             "cover_url": body.get("cover_url", ""),
             "duration_ms": body.get("duration_ms", 0),
             "fee": body.get("fee", 0),
+            "sources": body.get("sources", []),
         }
-        return ok({"play_url": proxy_url, "song": song})
+
+        result = await play_service.play(song)
+        if not result:
+            return fail(3002, "无法获取歌曲播放地址")
+
+        # ★ 广播 WS music.play（触发前端播放 + play_start → DJ monologue）
+        from agent.runtime.ws_sender import enqueue_or_drop, build_music_play
+        enqueue_or_drop(build_music_play(
+            song=result["song"],
+            play_url=result["play_url"],
+            auto_play=True,
+            reason=body.get("reason", ""),
+        ))
+
+        # 更新 RDS current_song（确保后端状态立即同步，不等 play_start）
+        from agent.state.state_manager import state_manager
+        rds = state_manager.runtime_dj_state
+        if rds:
+            artists = song.get("artists", [])
+            artist_str = (
+                ", ".join(a.get("name", "") for a in artists)
+                if artists else ""
+            )
+            rds["current_song"] = {
+                "song_id": song_id,
+                "name": song.get("name", "未知歌曲"),
+                "artist": artist_str,
+            }
+
+        return ok({
+            "play_url": result["play_url"],
+            "song": result["song"],
+        })
 
     @app.post("/api/playlist/sync-queue")
     async def playlist_sync_queue(body: SyncQueueRequest):
@@ -375,18 +464,36 @@ def register_http_routes(app: FastAPI):
 
     @app.post("/api/user/analyze")
     async def user_analyze():
-        """手动触发 AI 分析全部本地歌单，生成/更新用户音乐画像。
+        """手动触发 AI 分析本地歌单歌曲，生成/更新用户音乐画像。
 
-        MVP：mock 实现，写入占位画像数据。
-        P2：调 LLMService 分析歌单。
+        调 ProfileService.analyze() 收集全部歌单歌曲，
+        LLM 分析产出 MusicProfile，存入 preference.music_profile。
         """
-        now_ms = int(time.time() * 1000)
-        memory_store.write("profile", "favorite_genres", ["pop", "rock", "electronic"])
-        memory_store.write("profile", "favorite_artists", [])
-        memory_store.write("profile", "music_preference_desc", "偏好流行、摇滚和电子音乐")
-        memory_store.write("profile", "AI_conclustion", "热爱多元曲风，喜欢探索新音乐")
-        memory_store.write("profile", "update_at", now_ms)
-        return ok({"update_at": now_ms})
+        from agent.services.profile_service import get_profile_service
+
+        svc = get_profile_service()
+        if svc is None:
+            return fail(9999, "ProfileService 未初始化")
+
+        result = await svc.analyze()
+        if not result.get("ok"):
+            return fail(3002, result.get("error", "分析失败"))
+
+        profile = result["profile"]
+        return ok({
+            "energy_baseline": profile.get("energy_baseline"),
+            "tempo_preference": profile.get("tempo_preference"),
+            "mood_distribution": profile.get("mood_distribution"),
+            "era_affinity": profile.get("era_affinity"),
+            "vocal_preference": profile.get("vocal_preference"),
+            "discovery_openness": profile.get("discovery_openness"),
+            "listening_pattern": profile.get("listening_pattern"),
+            "confidence": profile.get("confidence"),
+            "favorite_genres": profile.get("favorite_genres", []),
+            "favorite_artists": profile.get("favorite_artists", []),
+            "music_preference_desc": profile.get("music_preference_desc", ""),
+            "update_at": profile.get("last_analyzed_at", 0),
+        })
 
     # ── 6. feedback ──
 
@@ -596,28 +703,140 @@ def register_http_routes(app: FastAPI):
         )
         return ok(pl)
 
-    # ── 10. proxy ──
+    # ── 10. qq ──
+
+    @app.get("/api/qq/status")
+    async def qq_status():
+        """QQ 音乐登录状态（Agent 层统一格式）。"""
+        status = await _get_qq_login_status()
+        return ok(status)
+
+    @app.get("/api/qq/playlists")
+    async def qq_playlists():
+        """获取当前登录用户的 QQ 歌单列表。
+
+        调 _get_qq_login_status() 获取 uin，
+        代理到 QQMusicApi /user/{uin}/created_songlists。
+        """
+        status = await _get_qq_login_status()
+        if not status.get("login_status"):
+            return fail(1002, "QQ 音乐未登录")
+        uin = status.get("uin", 0)
+        if not uin:
+            return fail(1002, "无法获取用户标识")
+        result = await _call_qq_api("GET", f"/user/{uin}/created_songlists")
+        if result and result.get("code") == 0:
+            return ok(result.get("data", {}))
+        code = result.get("code", 3002) if result else 3002
+        msg = result.get("msg", "QQ 音乐服务不可用") if result else "QQ 音乐服务不可用"
+        return fail(code, msg)
+
+    @app.get("/api/qq/login/qrcode")
+    async def qq_qrcode():
+        """获取 QQ 扫码登录二维码（代理到 QQMusicApi）。"""
+        result = await _call_qq_api("GET", "/login/qrcode/qq")
+        if result and result.get("code") == 0:
+            return ok(result.get("data", {}))
+        return fail(3002, "获取 QQ QR 码失败")
+
+    @app.get("/api/qq/login/qrcode/status")
+    async def qq_qrcode_status(identifier: str = Query(..., description="QR 标识符")):
+        """轮询检查 QQ 扫码状态（代理到 QQMusicApi）。"""
+        result = await _call_qq_api("GET", "/login/qrcode/qq/status", {"identifier": identifier})
+        if result and result.get("code") == 0:
+            return ok(result.get("data", {}))
+        return fail(3002, "检查 QQ QR 码状态失败")
+
+    @app.post("/api/qq/playlist/import")
+    async def qq_playlist_import(body: QQPlaylistImportRequest):
+        """从 QQ 音乐导入歌单（拉取详情 + 写入本地 playlists.json）。
+
+        调 :8082/songlist/{qq_id}/detail 获取歌单详情及歌曲列表，
+        转换为内部 Song 格式后通过 playlist_store.import_from_qq() 持久化。
+        """
+        if not body.qq_id:
+            return fail(1001, "qq_id 不能为空")
+
+        qq_id = body.qq_id
+        result = await _call_qq_api("GET", f"/songlist/{qq_id}/detail", {"num": 100, "page": 1})
+        if not result or result.get("code") != 0:
+            msg = result.get("msg", "获取歌单详情失败") if result else "QQ 音乐服务不可用"
+            return fail(3002, msg)
+
+        # 解包 QQMusicApi 统一响应格式 {code, msg, data: {...}}
+        data = result.get("data") or {}
+        info = data.get("info") or {}
+        pl_name = info.get("title") or f"QQ 歌单 ({qq_id})"
+        pl_cover = info.get("picurl") or ""
+        pl_desc = info.get("desc") or ""
+
+        # 转换歌曲为内部 Song 格式（保留 sources[] 供直接播放）
+        songs_raw = data.get("songs") or []
+        songs = []
+        for s in songs_raw:
+            album_data = s.get("album") or {}
+            album_mid = album_data.get("mid") or ""
+            singer_list = s.get("singer") or []
+
+            song = {
+                "id": str(s.get("id", "")),
+                "name": s.get("name", "未知歌曲"),
+                "artists": [
+                    {"id": str(a.get("id", "")), "name": a.get("name", "")}
+                    for a in singer_list
+                ],
+                "album": {
+                    "id": str(album_data.get("id", "")),
+                    "name": album_data.get("name", ""),
+                },
+                "cover_url": (
+                    f"https://y.gtimg.cn/music/photo_new/T002R300x300M000{album_mid}.jpg"
+                    if album_mid else ""
+                ),
+                "duration_ms": int((s.get("interval", 0) or 0)) * 1000,
+                "fee": (s.get("pay") or {}).get("pay_play", 0) if isinstance(s.get("pay"), dict) else 0,
+                "sources": [{"provider": "qqmusic", "platform_id": str(s.get("id", "")), "platform_mid": s.get("mid") or None}],
+            }
+            songs.append(song)
+
+        pl = playlist_store.import_from_qq(
+            qq_id=int(qq_id),
+            name=pl_name,
+            songs=songs,
+            cover_url=pl_cover,
+            description=pl_desc,
+        )
+        return ok(pl)
+
+    # ── 11. proxy ──
 
     @app.get("/api/proxy/audio")
-    async def proxy_audio(url: str = Query(..., description="网易云 CDN 音频 URL")):
-        """代理网易云音频流，解决前端 CORS / Referer 限制。"""
+    async def proxy_audio(url: str = Query(...), provider: str = Query("netease")):
+        """代理音频流，解决前端 CORS / Referer 限制。
+
+        支持多 Provider：根据 provider 参数设置对应 Referer。
+        - netease → Referer: https://music.163.com/
+        - qqmusic → Referer: https://y.qq.com/
+        """
         if not url.startswith("http"):
             return fail(1001, "无效的音频 URL")
         try:
+            # ★ 动态 Referer：根据 provider 选择对应请求头
+            headers = PROVIDER_REFERERS.get(provider, PROVIDER_REFERERS["netease"]).copy()
             async with httpx.AsyncClient(timeout=30.0) as client:
                 resp = await client.get(
                     url,
-                    headers={"Referer": "https://music.163.com"},
+                    headers=headers,
                     follow_redirects=True,
                 )
                 if resp.status_code != 200:
                     return fail(3002, f"音频获取失败: HTTP {resp.status_code}")
-                content_type = resp.headers.get("content-type", "audio/mpeg")
-                # 检测 CDN 返回了 HTML（常见于 URL 过期或权限不足）
-                if content_type.startswith("text/html"):
+                content_type = (resp.headers.get("content-type") or "").lower()
+                # ★ 白名单校验：只放行 audio/* 和 application/octet-stream
+                if not (content_type.startswith("audio/") or content_type == "application/octet-stream"):
                     logger = __import__("logging").getLogger(__name__)
-                    logger.warning("Audio proxy: CDN returned HTML for url=%s", url[:80])
-                    return fail(3002, "音频不可用：CDN 返回了网页（可能已过期或需付费）")
+                    logger.warning("Audio proxy: rejected content-type=%s for url=%s", content_type, url[:80])
+                    return fail(3002, f"音频不可用：CDN 返回非音频内容 (content-type={content_type})")
                 return StreamingResponse(
                     resp.aiter_bytes(),
                     media_type=content_type,
@@ -634,7 +853,7 @@ def register_http_routes(app: FastAPI):
             return fail(3002, "音频获取失败: 网络错误")
 
 
-    # ── 11. TTS audio serving ──
+    # ── 12. TTS audio serving ──
 
     @app.get("/api/tts/audio/{filename}")
     async def serve_tts_audio(filename: str):
@@ -656,7 +875,7 @@ def register_http_routes(app: FastAPI):
                             headers={"Access-Control-Allow-Origin": "*",
                                      "Access-Control-Allow-Headers": "*"})
 
-    # ── 12. feishu ──
+    # ── 13. feishu ──
 
     @app.get("/api/feishu/status")
     async def feishu_status():

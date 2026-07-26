@@ -101,6 +101,10 @@ async def _handle_init_plan(state: dict, init_plan: dict) -> dict:
 	welcome_text = init_plan.get("welcome_text", "")
 	tool_msgs = state.get("tool_messages", []) or []
 
+	# ★ 日志 LLM 原始输出，排查重复歌名
+	llm_names = [f"{s.get('name','')} / {s.get('artist','')}" for s in initial_playlist]
+	logger.info("Init LLM playlist (%d songs): %s", len(initial_playlist), llm_names)
+
 	# ★ v9.13: 构建初始队列 — 对 LLM 规划的每首歌逐一 pick_best_song
 	#   不再使用 _get_all_search_songs + dedup 混搜结果作为歌单。
 	init_queue = _build_init_queue(initial_playlist, tool_msgs)
@@ -190,7 +194,7 @@ async def _handle_init_plan(state: dict, init_plan: dict) -> dict:
 	}]
 
 	# 转为前端 Song 格式
-	ws_song = _to_frontend_song(first_song)
+	ws_song = _build_song_payload(first_song)
 
 	pending_payload = {
 		"chat_reply": welcome_text,
@@ -262,7 +266,7 @@ async def _handle_song_finished(state: dict) -> dict:
 
 	if next_song:
 		song_id = next_song.get("song_id") or next_song.get("id", "")
-		ws_song = _to_frontend_song(next_song)
+		ws_song = _build_song_payload(next_song)
 
 		# ★ 歌间过渡语（不论 rds 是否存在都可用）
 		song_name = next_song.get("name", "下一首")
@@ -488,38 +492,40 @@ async def _handle_llm_decision(state: dict) -> dict:
 		artist = songs[0].get("artist", "")
 		tool_msgs = state.get("tool_messages", []) or []
 
-		# ★ Song Resolver：从搜索结果中选出最佳版本
-		#   pick_best_song 按歌名匹配度 + 歌手匹配度 + 版本分数综合评分
-		#   优先级：原版 > 录音室 > Live > 翻唱 > 伴奏
-		current_search = _get_current_search_songs(tool_msgs)
-		best = pick_best_song(name, artist, current_search)
-		song = None
-		song_id = ""
+		# ★ P6：优先匹配 recommend_music 预解析结果（已含真实 song_id）
+		song, song_id = _match_pre_resolved_song(name, artist, tool_msgs)
 
-		if best:
-			song = best
-			song_id = best.get("id", "")
-			logger.info("ActionPlanner: pick_best_song name=%r artist=%r -> song_id=%s",
-			            name, artist, song_id)
-		else:
-			# 兜底：用第一条搜索结果
-			first_search = _get_first_search_song(tool_msgs)
-			if first_search:
-				song = first_search
-				song_id = first_search.get("id", "")
-				logger.info("ActionPlanner: using first search result id=%s (pick_best_song unmatched)",
-				            song_id, name)
+		if not song_id:
+			# ★ 向后兼容：走 pick_best_song 路径
+			current_search = _get_current_search_songs(tool_msgs)
+			best = pick_best_song(name, artist, current_search)
+			song = None
+			song_id = ""
+
+			if best:
+				song = best
+				song_id = best.get("id", "")
+				logger.info("ActionPlanner: pick_best_song name=%r artist=%r -> song_id=%s",
+				            name, artist, song_id)
 			else:
-				# 兜底：匹配 fallback
-				fallback = _match_fallback_by_name_artist(name, artist)
-				if fallback:
-					song = fallback
-					song_id = fallback["song_id"]
-					logger.info("ActionPlanner: fallback match name=%r artist=%r -> song_id=%s",
-					            name, artist, song_id)
+				# 兜底：用第一条搜索结果
+				first_search = _get_first_search_song(tool_msgs)
+				if first_search:
+					song = first_search
+					song_id = first_search.get("id", "")
+					logger.info("ActionPlanner: using first search result id=%s (pick_best_song unmatched)",
+					            song_id, name)
 				else:
-					logger.warning("ActionPlanner: no match for name=%r artist=%r",
-					               name, artist)
+					# 兜底：匹配 fallback
+					fallback = _match_fallback_by_name_artist(name, artist)
+					if fallback:
+						song = fallback
+						song_id = fallback["song_id"]
+						logger.info("ActionPlanner: fallback match name=%r artist=%r -> song_id=%s",
+						            name, artist, song_id)
+					else:
+						logger.warning("ActionPlanner: no match for name=%r artist=%r",
+						               name, artist)
 
 		# ★ 边界保护（最后防线）
 		if song_id and _is_fake_song_id(song_id):
@@ -534,7 +540,7 @@ async def _handle_llm_decision(state: dict) -> dict:
 				"reason": f"llm_decision_{playlist_action}",
 			})
 			pending_payload["music_play"] = {
-				"song": _to_frontend_song(song) if song else None,
+				"song": _build_song_payload(song) if song else None,
 				"auto_play": True,
 			}
 
@@ -643,7 +649,7 @@ async def _handle_llm_decision(state: dict) -> dict:
 					"reason": f"fallback_{playlist_action}_empty",
 				})
 				pending_payload["music_play"] = {
-					"song": _to_frontend_song(fallback_song),
+					"song": _build_song_payload(fallback_song),
 					"auto_play": True,
 				}
 				# 用 fallback 列表填充队列
@@ -669,7 +675,7 @@ async def _handle_llm_decision(state: dict) -> dict:
 						"reason": "fallback_keep_empty",
 					})
 					pending_payload["music_play"] = {
-						"song": _to_frontend_song(fallback_song),
+						"song": _build_song_payload(fallback_song),
 						"auto_play": True,
 					}
 					_fill_queue_from_search_or_fallback(state, song_id, state.get("tool_messages", []) or [])
@@ -693,7 +699,7 @@ async def _handle_llm_decision(state: dict) -> dict:
 					"reason": "resume_queue_first",
 				})
 				pending_payload["music_play"] = {
-					"song": _to_frontend_song(_first),
+					"song": _build_song_payload(_first),
 					"auto_play": True,
 				}
 				logger.info("ActionPlanner: resume play first queue song=%s (no current_song, queue has %d songs)",
@@ -712,6 +718,37 @@ async def _handle_llm_decision(state: dict) -> dict:
 		"should_play_music": bool(pending_payload.get("music_play")),
 	}
 
+
+
+def _match_pre_resolved_song(name: str, artist: str, tool_messages: list) -> tuple:
+	"""从 recommend_music 工具结果中匹配已解析歌曲。
+
+	recommend_music 返回的歌曲已包含真实 song_id，
+	无需再走 pick_best_song 流程。
+	"""
+	if not name:
+		return None, ""
+	from agent.services.song_resolver import normalize_song_name, _artist_match_score
+	for msg in reversed(tool_messages):
+		if msg.get("name") != "recommend_music":
+			continue
+		res = msg.get("result", {})
+		if not isinstance(res, dict):
+			continue
+		songs = res.get("songs", [])
+		for s in songs:
+			sid = s.get("id", "") or s.get("song_id", "")
+			if not sid:
+				continue
+			sname = s.get("name", "")
+			sartist = s.get("artist", "")
+			if normalize_song_name(name) == normalize_song_name(sname):
+				if artist and sartist:
+					_, score = _artist_match_score(artist, sartist)
+					if score > 0:
+						return s, sid
+				return s, sid
+	return None, ""
 
 def _resolve_song_from_tools(name: str, artist: str, tool_messages: list) -> dict | None:
 	"""[向后兼容] 委托 pick_best_song 从搜索结果中选最佳歌曲。
@@ -756,7 +793,7 @@ def _get_all_search_songs(tool_messages: list) -> list[dict]:
 	seen = set()
 	result = []
 	for msg in reversed(tool_messages):
-		if msg.get("name") != "play_music":
+		if msg.get("name") not in ("play_music", "recommend_music"):
 			continue
 		res = msg.get("result", {})
 		if not isinstance(res, dict):
@@ -781,7 +818,7 @@ def _get_current_search_songs(tool_messages: list, max_recent: int = 3) -> list[
 	result = []
 	count = 0
 	for msg in reversed(tool_messages):
-		if msg.get("name") != "play_music":
+		if msg.get("name") not in ("play_music", "recommend_music"):
 			continue
 		count += 1
 		if count > max_recent:
@@ -938,7 +975,12 @@ def _build_init_queue(initial_playlist: list, tool_messages: list) -> list[dict]
         if not name:
             continue
 
-        best = pick_best_song(name, artist, all_search)
+        # ★ P6：优先从 recommend_music 预解析结果匹配
+        resolved_song, resolved_id = _match_pre_resolved_song(name, artist, tool_messages)
+        if resolved_song and resolved_id:
+            best = resolved_song
+        else:
+            best = pick_best_song(name, artist, all_search)
         if not best:
             logger.info("Init queue: pick_best_song unmatched for %r %r, skip", name, artist)
             continue
@@ -947,9 +989,11 @@ def _build_init_queue(initial_playlist: list, tool_messages: list) -> list[dict]
         if not sid or _is_fake_song_id(sid):
             continue
 
-        nname = normalize_song_name(name)
+        # ★ 使用搜索结果的干净歌名做去重（LLM 可能带 " - 歌手" 后缀）
+        dedup_name = best.get("name", name)
+        nname = normalize_song_name(dedup_name)
         if nname and nname in seen_names:
-            logger.debug("Init queue: dedup skip %r (same song already in queue)", name)
+            logger.debug("Init queue: dedup skip %r (LLM=%r, normalized=%r)", dedup_name, name, nname)
             continue
         if sid and sid in seen_ids:
             continue
@@ -975,8 +1019,12 @@ def _build_init_queue(initial_playlist: list, tool_messages: list) -> list[dict]
     return queue
 
 
-def _to_frontend_song(raw: dict) -> dict:
-	"""将内部 song dict 转为前端 WS music.play 格式。"""
+def _build_song_payload(raw: dict) -> dict:
+	"""将内部 song dict 转为 WS 消息 Song 格式。
+
+	保留原始 sources[] 供 ActionExecutor SourceSelector 消费。
+	WS 消息格式不变，sources 只内部传递。
+	"""
 	return {
 		"id": raw.get("song_id") or raw.get("id", ""),
 		"name": raw.get("name", "未知歌曲"),
@@ -989,6 +1037,7 @@ def _to_frontend_song(raw: dict) -> dict:
 		"cover_url": raw.get("cover_url", ""),
 		"duration_ms": raw.get("duration_ms", 0),
 		"fee": raw.get("fee", 0),
+		"sources": raw.get("sources", []),  # ★ P2: 透传，供 SourceSelector 消费
 	}
 
 

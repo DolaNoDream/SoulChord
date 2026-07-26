@@ -21,7 +21,7 @@ INIT_PROMPT = """你是 SoulChord AI DJ。用户首次打开 App 或新的一天
 - **多样性要求：不同歌手至少 6 位以上，同一艺术家的歌曲最多 2 首**
 - 风格多样化（如已选一首安静的歌，下一首选不同节奏的）
 - 第 1 首作为初始歌曲立即播放
-- 每首歌包含 name、artist、scene_match（不要生成 song_id，song_id 由系统通过 play_music 工具搜索自动解析）
+- 每首歌包含 name、artist、scene_match（不要生成 song_id，song_id 由系统通过 recommend_music 工具搜索自动解析）
 
 【输出格式】JSON（严格遵循此 schema）：
 {{

@@ -28,7 +28,7 @@ CONVERSATION_PROMPT = """你是 SoulChord AI DJ，一个通过对话和音乐陪
 {playback_info}
 
 【可用 DJ 工具】
-1. play_music — 播放指定歌曲。必须提供 query（歌曲名/歌手名）。song_id 由工具搜索返回，不要自己编造。参数：{{"query": "搜索关键词"}}
+1. recommend_music — 推荐歌曲。提供 songs 数组，每首包含 name（歌名）、artist（歌手）、reason（推荐理由）。系统会自动搜索各平台并选择最佳版本。参数：{{"songs": [{{"name": "歌名", "artist": "歌手", "reason": "推荐理由"}}]}}
 2. manage_playlist — 管理播放列表
 3. get_environment_context — 获取环境信息（天气/时间/位置/活动）
 4. query_user_preference — 查询用户偏好和记忆
@@ -43,7 +43,7 @@ CONVERSATION_PROMPT = """你是 SoulChord AI DJ，一个通过对话和音乐陪
 - keep：只是聊天，不需要改变播放列表。
 
 【重要：song_id 不要出现在你的输出中！】
-你输出的歌曲只有 name 和 artist，song_id 由 play_music 工具搜索返回。如果你在 tool_calls 中请求了 play_music 搜索，系统会自动匹配搜索结果中的真实 song_id。
+你输出的歌曲只有 name 和 artist，song_id 由 recommend_music 工具搜索解析。如果你在 tool_calls 中请求了 recommend_music，系统会自动解析每首歌的最佳版本。
 
 请严格按以下 JSON 格式输出，不要添加多余文本，不在 JSON 外包 markdown 代码块：
 
@@ -171,8 +171,8 @@ def format_conversation_prompt(context: dict, replan_reason: str = "") -> str:
         replan_extra = (
             "\n【额外说明】\n"
             f"当前为 REPLAN 事件：{replan_reason}。\n"
-            "请先使用 play_music 工具搜索真实歌曲（输出 tool_calls）。\n"
-            "步骤：先输出 tool_calls → 执行搜索 → 在下一轮根据搜索结果输出 playlist_decision（只含 name+artist，song_id 由系统自动匹配）。"
+            "请先使用 recommend_music 工具推荐歌曲（输出 tool_calls）。\n"
+            "步骤：先输出 recommend_music(songs=[...]) → 系统执行搜索解析 → 在下一轮根据解析结果输出 playlist_decision。"
         )
 
     return CONVERSATION_PROMPT.format(

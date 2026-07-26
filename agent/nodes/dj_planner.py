@@ -108,8 +108,8 @@ async def _handle_init(state: dict, snapshot: dict) -> dict:
         # 无 LLMService（测试 / 未配置）→ 回退 mock
         init_plan = _mock_init_plan(init_mode)
 
-    # ★ Inject play_music tool calls for initial_playlist
-    pending_calls = _inject_play_music_tools(init_plan)
+    # ★ P6: Inject recommend_music tool call for initial_playlist
+    pending_calls = _inject_recommend_music_tools(init_plan)
 
     return {
         "llm_decision": None,
@@ -119,26 +119,34 @@ async def _handle_init(state: dict, snapshot: dict) -> dict:
     }
 
 
-def _inject_play_music_tools(init_plan: dict) -> list:
-    """为 init_plan 的初始播放列表注入 play_music 搜索工具调用。
+def _inject_recommend_music_tools(init_plan: dict) -> list:
+    """为 init_plan 注入推荐音乐工具调用（单次 recommend_music 调用）。
 
-    提取前 INIT_TARGET_QUEUE_SIZE 首歌的 name+artist 作为搜索 query，
-    让 tool_dispatcher 执行真实搜索。搜索结果供 action_planner 逐首解析为真实 song_id。
+    ★ P6：将所有 LLM 规划歌曲打包为一个 recommend_music(songs=[...]) 调用，
+    tool_dispatcher 批量搜索解析，返回已解析歌曲（含真实 song_id）。
 
-    ★ v9.13: 注入全部规划歌曲（不再只取前 3 首），保证 playlist_queue 多样化。
+    之前：N 次 play_music(query) 调用，tool_messages 有 N 组原始搜索结果。
+    现在：1 次 recommend_music(songs) 调用，tool_messages 有 1 组已解析结果。
     """
     initial_playlist = init_plan.get("initial_playlist", [])
-    tool_calls = []
-    if initial_playlist:
-        for song in initial_playlist[:INIT_TARGET_QUEUE_SIZE]:
-            name = song.get("name", "")
-            artist = song.get("artist", "")
-            query = f"{name} {artist}".strip()
-            if query and len(query) > 1:
-                tool_calls.append({"name": "play_music", "args": {"query": query}})
-    if tool_calls:
-        logger.info("Injected %d play_music tool calls for init_plan", len(tool_calls))
-    return tool_calls
+    if not initial_playlist:
+        return []
+
+    songs = []
+    for song in initial_playlist[:INIT_TARGET_QUEUE_SIZE]:
+        name = song.get("name", "")
+        artist = song.get("artist", "")
+        if name and artist:
+            songs.append({
+                "name": name,
+                "artist": artist,
+                "reason": "initial_playlist",
+            })
+
+    if songs:
+        logger.info("Injected recommend_music tool call for %d songs (init_plan)", len(songs))
+        return [{"name": "recommend_music", "args": {"songs": songs}}]
+    return []
 
 
 async def _handle_conversation(state: dict, snapshot: dict) -> dict:
@@ -285,12 +293,22 @@ def _format_tool_results(tool_messages: list) -> str:
         result = msg.get("result", {}) or {}
         if isinstance(result, dict) and result.get("songs"):
             songs = result["songs"]
-            lines.append(f"🔍 play_music 搜索 \"{result.get('query', '')}\" 返回了 {len(songs)} 首歌曲：")
-            for i, s in enumerate(songs, 1):
-                sid = s.get("id", s.get("song_id", "?"))
-                sname = s.get("name", "?")
-                sartist = ", ".join(a.get("name", "") for a in (s.get("artists", []) or [])) or s.get("artist", "?")
-                lines.append(f"   {i}. song_id={sid} —— {sname} —— {sartist}")
+            if name == "recommend_music":
+                lines.append(f"🎵 recommend_music 推荐了 {len(songs)}/{result.get('requested', '?')} 首歌曲：")
+                for i, s in enumerate(songs, 1):
+                    sid = s.get("id", s.get("song_id", "?"))
+                    sname = s.get("name", "?")
+                    sartist = ", ".join(a.get("name", "") for a in (s.get("artists", []) or [])) or s.get("artist", "?")
+                    reason = s.get("_recommend_reason", "")
+                    reason_part = f" —— {reason}" if reason else ""
+                    lines.append(f"   {i}. song_id={sid} —— {sname} —— {sartist}{reason_part}")
+            else:
+                lines.append(f"🔍 play_music 搜索 \"{result.get('query', '')}\" 返回了 {len(songs)} 首歌曲：")
+                for i, s in enumerate(songs, 1):
+                    sid = s.get("id", s.get("song_id", "?"))
+                    sname = s.get("name", "?")
+                    sartist = ", ".join(a.get("name", "") for a in (s.get("artists", []) or [])) or s.get("artist", "?")
+                    lines.append(f"   {i}. song_id={sid} —— {sname} —— {sartist}")
         elif isinstance(result, dict) and result.get("play_url"):
             lines.append(f"▶ play_music 获取播放链接成功：song_id={result.get('song_id', '?')}")
         else:
@@ -300,45 +318,40 @@ def _format_tool_results(tool_messages: list) -> str:
 
 
 def _ensure_tool_calls(decision: dict) -> dict:
-    """确保 LLM decision 包含 play_music 工具调用。
+    """确保 LLM decision 包含 recommend_music 工具调用。
 
-    ★ v9.12.2: LLM 推荐 N 首不同歌曲 → 每首各生成一个 play_music 搜索调用。
-      让 tool_dispatcher 搜索到每首歌的真实版本，避免全部搜索结果来自同一 query
-      导致队列全是一首歌的不同版本。
+    ★ P6：LLM 推荐 N 首歌曲 → 打包为一个 recommend_music(songs=[...]) 调用。
+    tool_dispatcher 批量解析所有歌曲，返回含真实 song_id 的列表。
 
-    以前行为（Bug）：只给第 1 首歌生成搜索 → 5 个搜索结果全是同一首歌 → 队列 1 首
-    现在行为：为每首独特的歌各生成搜索 → 搜索结果多样 → 队列 N 首（去重后）
+    之前：N 次 play_music(query) 调用 → N 组原始搜索结果 → Round 2 启发式 dedup
+    现在：1 次 recommend_music(songs) 调用 → 1 组已解析结果 → Round 2 直接使用
     """
     playlist = decision.get("playlist_decision", {}) or {}
     songs = playlist.get("songs", []) or []
     tool_calls = decision.get("tool_calls", []) or []
 
-    # 收集已有的 play_music query（去重）
-    existing_queries: set[str] = set()
-    for tc in tool_calls:
-        if tc.get("name") == "play_music":
-            q = tc.get("args", {}).get("query", "")
-            if q:
-                existing_queries.add(q.lower().strip())
+    # 检查是否已有 recommend_music 调用
+    has_recommend = any(
+        tc.get("name") == "recommend_music" for tc in tool_calls
+    )
+    if has_recommend:
+        logger.debug("_ensure_tool_calls: recommend_music already present")
+        return decision
 
-    # 为每首尚未搜索的歌曲注入 play_music
-    added = 0
+    # 收集所有未处理的歌曲
+    song_list = []
     for song in songs:
         name = song.get("name", "")
         artist = song.get("artist", "")
-        query = f"{name} {artist}".strip() or name
-        if query and query.lower().strip() not in existing_queries:
-            existing_queries.add(query.lower().strip())
-            tool_calls.append({"name": "play_music", "args": {"query": query}})
-            added += 1
+        reason = song.get("reason", song.get("scene_match", ""))
+        if name and artist:
+            song_list.append({"name": name, "artist": artist, "reason": reason})
 
-    if added:
-        logger.info("_ensure_tool_calls: injected %d play_music calls for %d songs",
-                    added, len(songs))
+    if song_list:
+        tool_calls.append({"name": "recommend_music", "args": {"songs": song_list}})
+        logger.info("_ensure_tool_calls: injected recommend_music for %d songs", len(song_list))
         decision["tool_calls"] = tool_calls
-    else:
-        logger.debug("_ensure_tool_calls: no injection needed (%d existing calls for %d songs)",
-                     len(tool_calls), len(songs))
+
     return decision
 
 
@@ -378,11 +391,24 @@ def _build_replan_from_search(tool_messages: list, state: dict, snapshot: dict) 
 
     v9.2 修复：搜索结果已就绪时不再调 LLM，避免 REPLAN prompt 中
     "先输出 tool_calls" 的指令让 LLM 在 Round 2 继续输出搜索请求而非 playlist_decision。
+
+    ★ P5.x：搜索结果先按歌曲实体聚类+版本过滤，再入 playlist。
+      避免同一首歌的 Live/Remix/翻唱版本污染队列。
+
+    ★ P6：优先从 recommend_music 结果提取（已解析歌曲，无需 dedup），
+      向后兼容 play_music 搜索结果。
     """
-    songs = _extract_songs_from_tool_messages(tool_messages)
+    # ★ P6：优先从 recommend_music 结果提取
+    resolved_songs = _extract_recommended_songs(tool_messages)
+
+    # 向后兼容：从 play_music 搜索结果提取 + dedup
+    if not resolved_songs:
+        raw_songs = _extract_songs_from_tool_messages(tool_messages)
+        resolved_songs = _dedupe_search_results_to_unique_songs(raw_songs, max_songs=5)
+
     reason = (state.get("trigger_event") or {}).get("reason", "播放列表补充")
 
-    if songs:
+    if resolved_songs:
         prog = snapshot.get("program", state.get("program", {})) or {}
         decision = {
             "program_decision": {
@@ -398,7 +424,7 @@ def _build_replan_from_search(tool_messages: list, state: dict, snapshot: dict) 
                 "action": "add",
                 "songs": [
                     {"name": s.get("name", ""), "artist": _extract_artist_str(s), "scene_match": "default"}
-                    for s in songs[:5]
+                    for s in resolved_songs
                 ],
                 "reason": f"REPLAN搜索结果自动续杯（{reason}）",
             },
@@ -409,8 +435,8 @@ def _build_replan_from_search(tool_messages: list, state: dict, snapshot: dict) 
             },
             "tool_calls": [],
         }
-        logger.info("Replan round 2: built playlist from %d search results, reason=%r",
-                    len(songs), reason)
+        logger.info("Replan round 2: built playlist from %d unique songs, reason=%r",
+                    len(resolved_songs), reason)
         return _package_decision(decision, state)
 
     # 搜索结果为空 → 回退 mock（极端兜底，不应发生）
@@ -437,6 +463,79 @@ def _extract_songs_from_tool_messages(tool_messages: list) -> list[dict]:
             if sid and sid not in seen:
                 seen.add(sid)
                 result.append(s)
+    return result
+
+
+def _extract_recommended_songs(tool_messages: list) -> list[dict]:
+    """从 recommend_music 工具结果中提取已解析歌曲。
+
+    recommend_music 返回的 result.songs 已包含真实 song_id
+    和 sources[]，不需要进一步解析或去重。
+    """
+    seen = set()
+    result = []
+    for msg in tool_messages:
+        if msg.get("name") != "recommend_music":
+            continue
+        res = msg.get("result", {})
+        if not isinstance(res, dict):
+            continue
+        songs = res.get("songs", [])
+        for s in songs:
+            sid = s.get("id", "") or s.get("song_id", "")
+            if sid and sid not in seen:
+                seen.add(sid)
+                result.append(s)
+    return result
+
+
+def _dedupe_search_results_to_unique_songs(songs: list[dict], max_songs: int = 5) -> list[dict]:
+    """搜索结果按歌曲实体聚类，每个实体只保留最佳版本。
+
+    问题背景：
+      搜索 "午后" 返回 "午后"、"午后(Live)"、"午后 Remix" 等多个版本，
+      这些是同一首歌的不同候选版本，不应作为多首推荐歌曲入队。
+
+    做法：
+      1. 用 build_song_dedup_key 归一化 (标题, 歌手) 作为实体 key
+      2. 同一 key 的多条结果中，选版本分数最低的（原版 < Live < Cover）
+      3. 保留搜索结果的原始顺序，取前 max_songs 首
+
+    Args:
+        songs: 搜索结果列表（来自 _extract_songs_from_tool_messages）
+        max_songs: 最大返回歌曲数
+
+    Returns:
+        去重+选优后的列表，每个实体最多一首
+    """
+    from agent.services.song_resolver import build_song_dedup_key, _version_score
+
+    # 第一遍：按实体 key 分组，每组保留最佳版本
+    groups: dict[tuple[str, str], dict] = {}
+    for s in songs:
+        key = build_song_dedup_key(s)
+        if not key[0]:
+            continue
+        if key not in groups:
+            groups[key] = dict(s)
+        else:
+            existing = _version_score(groups[key].get("name", ""))
+            current = _version_score(s.get("name", ""))
+            if current < existing:  # 分数越低越优先（原版=0 < Live=10 < Cover=20）
+                groups[key] = dict(s)
+
+    # 第二遍：按原始顺序输出，同一实体只输出最佳版本
+    seen: set[tuple[str, str]] = set()
+    result: list[dict] = []
+    for s in songs:
+        key = build_song_dedup_key(s)
+        if not key[0] or key in seen:
+            continue
+        seen.add(key)
+        result.append(groups[key])
+        if len(result) >= max_songs:
+            break
+
     return result
 
 

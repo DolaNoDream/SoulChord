@@ -59,6 +59,27 @@ class LLMService:
         self._timeout_s = timeout_s
         self._configured = True
 
+    def reconfigure(
+        self,
+        api_key: str,
+        base_url: str | None = None,
+        model: str | None = None,
+        timeout_s: int | None = None,
+    ) -> None:
+        """热更新 LLM 配置（例如用户通过前端更新 API key 后调用）。
+
+        重置 client 使下次 _ensure_client 用新 key 创建。
+        """
+        self._api_key = api_key
+        if base_url is not None:
+            self._base_url = base_url
+        if model is not None:
+            self._model = model
+        if timeout_s is not None:
+            self._timeout_s = timeout_s
+        self._configured = True
+        self._client = None  # 强制下次重建
+
     def _ensure_client(self):
         """延迟初始化 AsyncOpenAI client。"""
         if self._client is not None:

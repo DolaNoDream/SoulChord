@@ -18,6 +18,8 @@ from agent.services.song_resolver import (
     normalize_song_name,
     pick_best_song,
     dedup_candidates,
+    normalize_title,
+    build_song_dedup_key,
 )
 
 
@@ -227,17 +229,94 @@ class TestDedupCandidates:
         assert "5002" not in ids
 
     def test_dedup_same_name_different_artist(self):
-        """同一歌曲不同歌手翻唱 → 去重（归一化歌名唯一 key）。"""
+        """不同歌手翻唱 → 不再去重，(歌名, 歌手) 为唯一 key。"""
         candidates = [
-            {"id": "7001", "name": "爱错(Live)", "artists": [{"name": "王力宏"}]},
+            {"id": "7001", "name": "爱错", "artists": [{"name": "王力宏"}]},
             {"id": "7002", "name": "爱错", "artists": [{"name": "北夜"}]},
-            {"id": "7003", "name": "爱错", "artists": [{"name": "王力宏的小迷妹"}]},
-            {"id": "7004", "name": "江南", "artists": [{"name": "林俊杰"}]},
-            {"id": "7005", "name": "江南（正式版）", "artists": [{"name": "林俊杰, 街道办"}]},
-            {"id": "7006", "name": "江南", "artists": [{"name": "林俊杰-, 夏蔓蔓"}]},
         ]
         result = dedup_candidates(candidates)
-        assert len(result) == 2  # 爱错 × 1 + 江南 × 1 = 2
-        names = {normalize_song_name(s.get("name", "")) for s in result}
-        assert "爱错" in names
-        assert "江南" in names
+        assert len(result) == 2  # 不同歌手 → 不同 key
+
+    def test_dedup_same_artist_same_title(self):
+        """同歌手同歌名（不同版本）→ 去重。"""
+        candidates = [
+            {"id": "8001", "name": "晴天", "artists": [{"name": "周杰伦"}]},
+            {"id": "8002", "name": "晴天(Live)", "artists": [{"name": "周杰伦"}]},
+        ]
+        result = dedup_candidates(candidates)
+        assert len(result) == 1
+        assert result[0]["id"] == "8001"
+
+    # ═══════════════════════════════════════════════════════════════
+    # normalize_title
+    # ═══════════════════════════════════════════════════════════════
+
+    def test_normalize_title_artist_prefix(self):
+        """artist 前缀匹配时去除。"""
+        assert normalize_title({
+            "name": "买辣椒也用券-起风了（小7 remix）",
+            "artists": [{"name": "买辣椒也用券"}],
+        }) == "起风了"
+
+    def test_normalize_title_no_prefix(self):
+        """artist 不匹配前缀 → 保留原标题。"""
+        assert normalize_title({
+            "name": "Love Story",
+            "artists": [{"name": "Taylor Swift"}],
+        }) == "love story"
+
+    def test_normalize_title_hyphen_in_name(self):
+        """正常带连字符的歌名不被误删。"""
+        assert normalize_title({
+            "name": "A Sky Full of Stars",
+            "artists": [{"name": "Coldplay"}],
+        }) == "a sky full of stars"
+
+    # ═══════════════════════════════════════════════════════════════
+    # build_song_dedup_key
+    # ═══════════════════════════════════════════════════════════════
+
+    def test_dedup_key_qq_vs_netease(self):
+        """QQ 格式 '歌手-歌名' vs 网易云 '歌名' → 相同 key。"""
+        qq = {"name": "买辣椒也用券-起风了（小7 remix）", "artists": [{"name": "买辣椒也用券"}]}
+        netease = {"name": "起风了", "artists": [{"name": "买辣椒也用券"}]}
+        assert build_song_dedup_key(qq) == build_song_dedup_key(netease)
+
+    def test_dedup_key_different_artist(self):
+        """不同歌手同名歌曲 → 不同 key。"""
+        a = {"name": "晴天", "artists": [{"name": "周杰伦"}]}
+        b = {"name": "晴天", "artists": [{"name": "王俊凯"}]}
+        assert build_song_dedup_key(a) != build_song_dedup_key(b)
+
+    # ═══════════════════════════════════════════════════════════════
+    # dedup_candidates — 增强场景
+    # ═══════════════════════════════════════════════════════════════
+
+    def test_dedup_artist_prefix(self):
+        """QQ 格式 歌手-歌名（小7 remix）与网易云格式纯歌名 → 去重。"""
+        songs = [
+            {"id": "9001", "name": "起风了", "artists": [{"name": "买辣椒也用券"}]},
+            {"id": "9002", "name": "买辣椒也用券-起风了（小7 remix）", "artists": [{"name": "买辣椒也用券"}]},
+        ]
+        assert len(dedup_candidates(songs)) == 1
+
+    def test_dedup_artist_prefix_reverse_order(self):
+        """网易云先出现，QQ 后出现 → 去重（反向也可）。"""
+        songs = [
+            {"id": "9002", "name": "买辣椒也用券-起风了（小7 remix）", "artists": [{"name": "买辣椒也用券"}]},
+            {"id": "9001", "name": "起风了", "artists": [{"name": "买辣椒也用券"}]},
+        ]
+        assert len(dedup_candidates(songs)) == 1
+
+    def test_not_remove_hyphen_title(self):
+        """正常带连字符的歌名不会被误删。"""
+        songs = [
+            {"id": "A001", "name": "A Sky Full of Stars", "artists": [{"name": "Coldplay"}]},
+            {"id": "A002", "name": "五月天-突然好想你", "artists": [{"name": "五月天"}]},
+        ]
+        result = dedup_candidates(songs)
+        # 两首都应保留（不同歌手不同歌）
+        assert len(result) == 2
+        ids = {s["id"] for s in result}
+        assert "A001" in ids
+        assert "A002" in ids

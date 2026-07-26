@@ -350,8 +350,8 @@ class TestSystemInitFullChain:
             init_mode="first_init",
         )
 
-        with patch("agent.nodes.action_executor._music.get_play_url",
-                    return_value="http://localhost:8000/api/proxy/audio?url=https://example.com/test.mp3"):
+        with patch("agent.services.play_service.PlayService._resolve_legacy",
+                    return_value="https://example.com/test.mp3"):
             result = await ctx["graph"].ainvoke(state)
 
         # ── 断言 Graph 结果 ──

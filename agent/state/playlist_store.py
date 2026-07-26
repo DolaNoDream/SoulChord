@@ -129,12 +129,46 @@ def import_from_netease(netease_id: int, name: str, songs: list, cover_url: str 
         "playlist_id": str(uuid.uuid4()),
         "name": name,
         "source_url": f"https://music.163.com/playlist?id={netease_id}",
+        "provider": "netease",
         "netease_id": netease_id,
         "song_count": len(songs),
         "created_at": int(time.time() * 1000),
         "cover_url": cover_url,
         "description": description,
         "remark": "来自网易云账号导入",
+    }
+    data["playlists"].append(pl)
+    if songs:
+        data["songs"][pl["playlist_id"]] = songs
+    _save_all(data)
+    return pl
+
+
+def import_from_qq(qq_id: int, name: str, songs: list, cover_url: str = "", description: str = "") -> Optional[dict]:
+    """从 QQ 音乐导入真实歌单（含歌曲列表）。
+
+    Args:
+        qq_id: QQ 音乐歌单数字 ID（即 songlist_id）。
+        name: 歌单名称。
+        songs: 歌曲列表（保留 sources[] 供直接播放）。
+        cover_url: 封面 URL。
+        description: 歌单描述。
+
+    Returns:
+        写入后的完整歌单 dict，失败返回 None。
+    """
+    data = _load_all()
+    pl = {
+        "playlist_id": str(uuid.uuid4()),
+        "name": name,
+        "source_url": f"https://y.qq.com/n/ryqq/playlist/{qq_id}",
+        "provider": "qqmusic",
+        "qq_id": qq_id,
+        "song_count": len(songs),
+        "created_at": int(time.time() * 1000),
+        "cover_url": cover_url,
+        "description": description,
+        "remark": "来自 QQ 音乐导入",
     }
     data["playlists"].append(pl)
     if songs:

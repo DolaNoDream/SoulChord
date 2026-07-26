@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, watch, nextTick, inject } from 'vue'
+import { ref, watch, nextTick, inject, onMounted } from 'vue'
 import type { Ref } from 'vue'
 import { usePlayerStore } from '@/stores/player'
 import { useChatStore } from '@/stores/chat'
@@ -34,7 +34,8 @@ async function scrollToBottom() {
   await nextTick()
   if (messageListRef.value) messageListRef.value.scrollTop = messageListRef.value.scrollHeight
 }
-watch(() => chatStore.messages.length, () => scrollToBottom())
+watch(() => chatStore.messages.length, () => scrollToBottom(), { immediate: true })
+onMounted(() => scrollToBottom())
 
 function checkLlmKey(): boolean {
   if (!settingsStore.hasLlmKey) {

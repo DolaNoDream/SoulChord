@@ -95,6 +95,78 @@ async function handleAnalyze() {
           <span class="profile-panel__value profile-panel__value--time">{{ formatDate(userStore.profile?.update_at ?? 0) }}</span>
         </div>
       </div>
+
+      <!-- P4 扩展画像字段 -->
+      <div v-if="userStore.profile?.energy_baseline !== undefined" class="profile-panel__section">
+        <h4 class="profile-panel__section-title">📊 深度音乐分析 <span class="profile-panel__readonly-tag">AI 自动生成</span></h4>
+
+        <div class="profile-panel__grid">
+          <div class="profile-panel__metric">
+            <span class="profile-panel__metric-label">能量基线</span>
+            <div class="profile-panel__metric-bar-wrapper">
+              <div class="profile-panel__metric-bar" :style="{ width: (userStore.profile!.energy_baseline! * 100) + '%' }"></div>
+            </div>
+            <span class="profile-panel__metric-value">{{ Math.round(userStore.profile!.energy_baseline! * 100) }}%</span>
+          </div>
+
+          <div class="profile-panel__metric">
+            <span class="profile-panel__metric-label">探索意愿</span>
+            <div class="profile-panel__metric-bar-wrapper">
+              <div class="profile-panel__metric-bar" :style="{ width: (userStore.profile!.discovery_openness! * 100) + '%' }"></div>
+            </div>
+            <span class="profile-panel__metric-value">{{ Math.round(userStore.profile!.discovery_openness! * 100) }}%</span>
+          </div>
+
+          <div class="profile-panel__metric">
+            <span class="profile-panel__metric-label">分析置信度</span>
+            <div class="profile-panel__metric-bar-wrapper">
+              <div class="profile-panel__metric-bar" :style="{ width: (userStore.profile!.confidence! * 100) + '%' }"></div>
+            </div>
+            <span class="profile-panel__metric-value">{{ Math.round(userStore.profile!.confidence! * 100) }}%</span>
+          </div>
+        </div>
+
+        <div class="profile-panel__field" v-if="userStore.profile?.tempo_preference">
+          <span class="profile-panel__label">速度偏好</span>
+          <span class="profile-panel__tag profile-panel__tag--genre">{{ { fast: '快节奏', moderate: '适中', slow: '慢节奏', mixed: '混合' }[userStore.profile!.tempo_preference!] || userStore.profile!.tempo_preference }}</span>
+        </div>
+
+        <div class="profile-panel__field" v-if="userStore.profile?.vocal_preference">
+          <span class="profile-panel__label">人声偏好</span>
+          <span class="profile-panel__tag profile-panel__tag--artist">{{ { male_lead: '男声主导', female_lead: '女声主导', instrumental: '纯音乐', mixed: '混合' }[userStore.profile!.vocal_preference!] || userStore.profile!.vocal_preference }}</span>
+        </div>
+
+        <div class="profile-panel__field" v-if="userStore.profile?.listening_pattern">
+          <span class="profile-panel__label">聆听模式</span>
+          <span class="profile-panel__tag">{{ { focused: '专注聆听', background: '背景音乐', mixed: '混合' }[userStore.profile!.listening_pattern!] || userStore.profile!.listening_pattern }}</span>
+        </div>
+
+        <div class="profile-panel__field" v-if="userStore.profile?.mood_distribution && Object.keys(userStore.profile!.mood_distribution!).length > 0">
+          <span class="profile-panel__label">情绪分布</span>
+          <div class="profile-panel__mood-bars">
+            <div v-for="(val, mood) in userStore.profile!.mood_distribution!" :key="mood" class="profile-panel__mood-row">
+              <span class="profile-panel__mood-label">{{ mood }}</span>
+              <div class="profile-panel__metric-bar-wrapper">
+                <div class="profile-panel__metric-bar profile-panel__metric-bar--mood" :style="{ width: (val * 100) + '%' }"></div>
+              </div>
+              <span class="profile-panel__metric-value">{{ Math.round(val * 100) }}%</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="profile-panel__field" v-if="userStore.profile?.era_affinity && Object.keys(userStore.profile!.era_affinity!).length > 0">
+          <span class="profile-panel__label">年代偏好</span>
+          <div class="profile-panel__mood-bars">
+            <div v-for="(val, era) in userStore.profile!.era_affinity!" :key="era" class="profile-panel__mood-row">
+              <span class="profile-panel__mood-label">{{ era }}</span>
+              <div class="profile-panel__metric-bar-wrapper">
+                <div class="profile-panel__metric-bar profile-panel__metric-bar--era" :style="{ width: (val * 100) + '%' }"></div>
+              </div>
+              <span class="profile-panel__metric-value">{{ Math.round(val * 100) }}%</span>
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
   </div>
 </template>

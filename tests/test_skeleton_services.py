@@ -155,12 +155,14 @@ class TestAdapterPlayMusic:
 
     @pytest.mark.asyncio
     async def test_play_music_with_query_calls_search(self):
-        """play_music 传 query → 调 search_songs。"""
-        with patch("agent.services.adapter.adapter.music.search_songs",
-                   new_callable=AsyncMock,
-                   return_value=[{"song_id": "509781655", "name": "想你就写信"}]):
-            from agent.services.adapter import adapter
-            result = await adapter.dispatch("play_music", {"query": "周杰伦"})
+        """play_music 传 query → 调 search_songs（fallback，无 Provider 时）。"""
+        with patch("agent.services.adapter.adapter._get_search_service",
+                   return_value=None):
+            with patch("agent.services.adapter.adapter.music.search_songs",
+                       new_callable=AsyncMock,
+                       return_value=[{"song_id": "509781655", "name": "想你就写信"}]):
+                from agent.services.adapter import adapter
+                result = await adapter.dispatch("play_music", {"query": "周杰伦"})
         assert result["success"] is True
         assert len(result["songs"]) == 1
         assert result["songs"][0]["song_id"] == "509781655"

@@ -13,12 +13,17 @@ export const useSettingsStore = defineStore('settings', () => {
   // 网易云登录状态
   const neteaseLoginStatus = ref(false)
   const neteaseNickname = ref('')
+  // QQ 音乐登录状态
+  const qqLoginStatus = ref(false)
+  const qqNickname = ref('')
 
   const isDark = computed(() => theme.value === 'dark')
   /** 是否配置了 LLM APIKey（未配置时 AI 对话、歌单画像分析禁用） */
   const hasLlmKey = computed(() => llmApiKey.value.trim().length > 0)
   /** 是否登录了网易云（未登录时歌单导入、音乐播放禁用） */
   const hasNeteaseLogin = computed(() => neteaseLoginStatus.value)
+  /** 是否登录了 QQ 音乐 */
+  const hasQqLogin = computed(() => qqLoginStatus.value)
 
   /** 从后端 GET /api/init 的 settings 字段加载 */
   function loadFromBackend(backendSettings: Record<string, unknown>) {
@@ -34,6 +39,13 @@ export const useSettingsStore = defineStore('settings', () => {
     persistToStorage()
   }
 
+  /** 加载 QQ 音乐登录状态（来自 init/qqstatus 接口） */
+  function setQqStatus(status: boolean, nickname?: string) {
+    qqLoginStatus.value = status
+    if (nickname !== undefined) qqNickname.value = nickname
+    persistToStorage()
+  }
+
   function loadFromStorage() {
     try {
       const stored = localStorage.getItem('soulchord-settings')
@@ -45,6 +57,8 @@ export const useSettingsStore = defineStore('settings', () => {
         if (data.language) language.value = data.language
         if (data.neteaseLoginStatus !== undefined) neteaseLoginStatus.value = data.neteaseLoginStatus
         if (data.neteaseNickname) neteaseNickname.value = data.neteaseNickname
+        if (data.qqLoginStatus !== undefined) qqLoginStatus.value = data.qqLoginStatus
+        if (data.qqNickname) qqNickname.value = data.qqNickname
       }
     } catch { /* ignore */ }
   }
@@ -55,6 +69,8 @@ export const useSettingsStore = defineStore('settings', () => {
       language: language.value, llmApiKey: llmApiKey.value,
       neteaseLoginStatus: neteaseLoginStatus.value,
       neteaseNickname: neteaseNickname.value,
+      qqLoginStatus: qqLoginStatus.value,
+      qqNickname: qqNickname.value,
     }))
   }
 
@@ -78,9 +94,10 @@ export const useSettingsStore = defineStore('settings', () => {
   return {
     theme, alwaysOnTop, language, llmApiKey,
     neteaseLoginStatus, neteaseNickname,
-    isDark, hasLlmKey, hasNeteaseLogin,
+    qqLoginStatus, qqNickname,
+    isDark, hasLlmKey, hasNeteaseLogin, hasQqLogin,
     syncAlwaysOnTop, syncToBackend, loadFromStorage, loadFromBackend,
-    setNeteaseStatus,
+    setNeteaseStatus, setQqStatus,
     setTheme: (m: ThemeMode) => { theme.value = m },
   }
 })

@@ -33,6 +33,9 @@ from agent.runtime.scheduler import Scheduler
 from agent.state.data_initializer import init_data_files
 from agent.state.player_state import clear_playback_cache
 from agent.routes.http_routes import register_http_routes
+from agent.services.providers.registry import create_providers
+from agent.services.provider_account_service import ProviderAccountService, set_account_service
+from agent.services.profile_service import ProfileService, set_profile_service
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +49,7 @@ _graph = None
 _llm_service = LLMService()
 _ws_sender_task: asyncio.Task | None = None
 _ws_heartbeat_task: asyncio.Task | None = None
+_account_service: ProviderAccountService | None = None
 
 
 @asynccontextmanager
@@ -75,10 +79,19 @@ async def lifespan(app: FastAPI):
 
     # ─────────────────────────────────────────────────
     # ❖ 第 2.7 步：configure LLMService（DeepSeek）
+    #   优先使用用户通过前端保存的 key（settings.json），
+    #   回退到 .env 的 DEEPSEEK_API_KEY。
     # ─────────────────────────────────────────────────
-    logger.info("[lifespan 2.7/9] Configure LLMService (model=%s, key_len=%d)", settings.LLM_MODEL, len(settings.DEEPSEEK_API_KEY))
+    from agent.state.settings_store import load as load_user_settings
+    _user_settings = load_user_settings()
+    _user_key = (_user_settings or {}).get("llm_apikey", "").strip()
+    _effective_key = _user_key or settings.DEEPSEEK_API_KEY
+    logger.info(
+        "[lifespan 2.7/9] Configure LLMService (model=%s, key_len=%d, from_user=%s)",
+        settings.LLM_MODEL, len(_effective_key), bool(_user_key),
+    )
     _llm_service.configure(
-        api_key=settings.DEEPSEEK_API_KEY,
+        api_key=_effective_key,
         base_url=settings.DEEPSEEK_BASE_URL,
         model=settings.LLM_MODEL,
         timeout_s=settings.LLM_TIMEOUT_S,
@@ -97,6 +110,24 @@ async def lifespan(app: FastAPI):
         persona_style=settings.dj_host.persona_style,
     )
     logger.info("[lifespan 2.8/9] DJHostService initialized (enabled=%s)", settings.dj_host.enabled)
+
+    # ─────────────────────────────────────────────────
+    # ❖ 第 2.9 步：initialize ProviderAccountService
+    # ─────────────────────────────────────────────────
+    global _account_service
+    logger.info("[lifespan 2.9/9] Init ProviderAccountService")
+    provider_registry = create_providers()
+    _account_service = ProviderAccountService(provider_registry)
+    set_account_service(_account_service)
+    await _account_service.start()
+
+    # ─────────────────────────────────────────────────
+    # ❖ 第 2.10 步：initialize ProfileService
+    # ─────────────────────────────────────────────────
+    logger.info("[lifespan 2.10/9] Init ProfileService")
+    _profile_svc = ProfileService(llm_service=_llm_service)
+    set_profile_service(_profile_svc)
+    await _profile_svc.start()
 
     # ─────────────────────────────────────────────────
     # 第 3 步：warmup Memory（4 category + music_profile）
@@ -155,6 +186,10 @@ async def lifespan(app: FastAPI):
 
     # ── 关闭 ──
     logger.info("Shutting down...")
+    if _account_service:
+        await _account_service.stop()
+    if _profile_svc:
+        await _profile_svc.stop()
     if scheduler:
         await scheduler.stop()
     if dispatcher:
@@ -212,7 +247,7 @@ app.add_middleware(
 )
 
 # ★ 注册 HTTP 路由（8 群组：health / init / settings / playlist / user / feedback / history / netease）
-register_http_routes(app)
+register_http_routes(app, llm_service=_llm_service)
 
 
 @app.websocket("/ws/client")

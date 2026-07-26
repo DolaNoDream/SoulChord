@@ -102,7 +102,7 @@ class TestSongFinishedQueueHasNext:
         ctx["runtime_dj_state"]["program_mood"] = "warm"
 
         with patch(
-            "agent.nodes.action_executor._music.get_play_url",
+            "agent.services.play_service.PlayService._resolve_legacy",
             new_callable=AsyncMock,
             return_value="https://music.example.com/e2e/s002.mp3",
         ):
@@ -157,7 +157,7 @@ class TestSongFinishedQueueHasNext:
         )
 
         with patch(
-            "agent.nodes.action_executor._music.get_play_url",
+            "agent.services.play_service.PlayService._resolve_legacy",
             new_callable=AsyncMock,
             return_value="https://music.example.com/e2e/s002.mp3",
         ):
